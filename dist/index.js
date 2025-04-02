@@ -41168,29 +41168,56 @@ class ClaudeService {
     async generateReview(context) {
         try {
             core.info("Generating code review with Claude AI...");
-            // Get the prompt template based on project type
-            const promptTemplate = (0, base_1.getPromptTemplate)(this.options.projectType);
-            let systemPrompt = promptTemplate.generatePrompt(context);
-            // If the use of Repomix is enabled, pack the repository
-            if (this.options.useRepomix) {
-                core.info("Using Repomix to pack repository for more comprehensive code review");
-                // Pack the repository
-                const packedRepo = await this.repomixService.packRepository(context);
-                // Add packed repo to the system prompt
-                if (packedRepo && !packedRepo.startsWith("Failed")) {
-                    core.info("Adding packed repository to the prompt");
-                    systemPrompt = `${systemPrompt}\n\n# Full Repository Context\n\n${packedRepo}`;
-                }
-                else {
-                    core.warning("Failed to pack repository with Repomix, falling back to basic review");
-                }
-            }
-            systemPrompt += `\n\n# Response Format
-Please provide your review in a structured JSON format that includes:
-1. A summary section with overall feedback
-2. Line-specific comments for each file
+            const systemPrompt = await this.buildSystemPrompt(context);
+            const responseText = await this.callClaudeApi(systemPrompt);
+            return await this.parseClaudeResponse(responseText);
+        }
+        catch (error) {
+            return this.handleGenerationError(error);
+        }
+    }
+    async buildSystemPrompt(context) {
+        const promptTemplate = (0, base_1.getPromptTemplate)(this.options.projectType);
+        let systemPrompt = promptTemplate.generatePrompt(context);
+        if (this.options.useRepomix) {
+            systemPrompt = await this.addRepomixContext(systemPrompt, context);
+        }
+        systemPrompt += this.getResponseFormatInstructions();
+        return systemPrompt;
+    }
+    async addRepomixContext(systemPrompt, context) {
+        core.info("Using Repomix to pack repository for more comprehensive code review");
+        const packedRepo = await this.repomixService.packRepository(context);
+        if (packedRepo && !packedRepo.startsWith("Failed")) {
+            core.info("Adding packed repository to the prompt");
+            return `${systemPrompt}\n\n# Full Repository Context\n\n${packedRepo}`;
+        }
+        core.warning("Failed to pack repository with Repomix, falling back to basic review");
+        return systemPrompt;
+    }
+    getResponseFormatInstructions() {
+        // Keep this the same as in your original code
+        return `\n\n# Response Format
+Please provide your review in a structured JSON format that MUST ONLY include these exact fields:
+1. "summary" - A string with overall feedback
+2. "comments" - An array of comment objects
 
 Your ENTIRE response must be valid JSON enclosed in a markdown code block. Do not include any text, explanations, or comments outside the JSON code block.
+
+The JSON MUST follow this exact structure:
+{
+  "summary": string,
+  "comments": [
+    {
+      "path": string,
+      "line": number,
+      "body": string
+    },
+    ...
+  ]
+}
+
+DO NOT add any extra fields to this structure. Fields like "overview", "keyChanges", "recommendedImprovements", "potentialRisks", or any other fields not explicitly listed above are NOT allowed and will cause parsing errors.
 
 Format both the "summary" and comment "body" fields as markdown text. This allows you to include:
 - Code blocks with syntax highlighting
@@ -41199,6 +41226,8 @@ Format both the "summary" and comment "body" fields as markdown text. This allow
 - Links to documentation when relevant
 
 IMPORTANT: When including code snippets or special characters in your response, ensure they are properly escaped for JSON. Double quotes must be escaped with a backslash (\\"), newlines with \\n, tabs with \\t, and backslashes themselves with a double backslash (\\\\).
+
+IMPORTANT: When using code blocks with backticks in your response, each backtick should be properly escaped as \\\` in the JSON. For triple backticks that start/end code blocks, use \\\`\\\`\\\` in the JSON.
 
 When writing Korean or other non-Latin characters, make sure they are properly encoded in UTF-8. Do not add extra escape sequences for non-Latin characters.
 
@@ -41212,7 +41241,7 @@ Example format:
     {
       "path": "src/utils/parser.ts",
       "line": 42,
-      "body": "이 함수 이름이 설명적이지 않습니다. 무엇을 하는지 더 명확하게 설명하도록 이름을 변경하는 것을 고려하세요.\\n\\n예시:\\n\\n\`\`\`typescript\\n// 대신\\nfunction process(data) {\\n  // ...\\n}\\n\\n// 다음과 같이 고려\\nfunction validateUserInput(data) {\\n  // ...\\n}\\n\`\`\`"
+      "body": "이 함수 이름이 설명적이지 않습니다. 무엇을 하는지 더 명확하게 설명하도록 이름을 변경하는 것을 고려하세요.\\n\\n예시:\\n\\n\\\`\\\`\\\`typescript\\n// 대신\\nfunction process(data) {\\n  // ...\\n}\\n\\n// 다음과 같이 고려\\nfunction validateUserInput(data) {\\n  // ...\\n}\\n\\\`\\\`\\\`"
     },
     {
       "path": "src/models/user.ts",
@@ -41224,123 +41253,287 @@ Example format:
 \`\`\`
 
 Please ensure your JSON is valid and properly formatted. Make sure to escape any special characters in the JSON to prevent parsing errors.`;
-            core.debug(`Using model: ${this.options.model}`);
-            core.debug(`System prompt length: ${systemPrompt.length} characters`);
-            const message = await this.client.messages.create({
-                model: this.options.model,
-                max_tokens: 4000,
-                system: systemPrompt,
-                messages: [
-                    {
-                        role: "user",
-                        content: "제공된 모든 변경사항을 검토하고 포괄적이면서도 간결한 코드 리뷰를 제공해주세요. 중요한 이슈에 집중하고, 구체적인 개선 제안을 코드 예시와 함께 제공해주세요. 변경된 파일과 관련 파일들 간의 잠재적 영향도 분석해주세요.",
-                    },
-                ],
-            });
-            const responseText = message.content[0].text;
-            core.debug(`Claude response: ${responseText}`);
-            // Extract JSON from the response
-            const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/) ||
-                responseText.match(/```\n([\s\S]*?)\n```/) ||
-                responseText.match(/{[\s\S]*}/);
-            if (!jsonMatch) {
-                throw new Error("Could not parse JSON review structure from Claude's response");
-            }
-            const jsonString = jsonMatch[0].replace(/```json\n|```\n|```/g, "");
-            // Try to parse JSON directly first
-            try {
-                // Before parsing, only handle necessary escaping (quotes, backslashes)
-                // but don't over-sanitize Korean characters
-                const sanitizedJson = jsonString
-                    // Fix double-escaped quotes in code blocks
-                    .replace(/\\\\"/g, '\\"')
-                    // Clean up any double escape sequences
-                    .replace(/\\\\/g, "\\");
-                const review = JSON.parse(sanitizedJson);
-                // Validate the structure
-                if (!review.summary || !Array.isArray(review.comments)) {
-                    throw new Error("Invalid review structure received from Claude");
-                }
-                return review;
-            }
-            catch (firstError) {
-                core.warning(`First JSON parsing attempt failed: ${firstError instanceof Error ? firstError.message : String(firstError)}`);
+    }
+    async callClaudeApi(systemPrompt) {
+        core.debug(`Using model: ${this.options.model}`);
+        core.debug(`System prompt length: ${systemPrompt.length} characters`);
+        const message = await this.client.messages.create({
+            model: this.options.model,
+            max_tokens: 4000,
+            system: systemPrompt,
+            messages: [
+                {
+                    role: "user",
+                    content: "제공된 모든 변경사항을 검토하고 포괄적이면서도 간결한 코드 리뷰를 제공해주세요. 중요한 이슈에 집중하고, 구체적인 개선 제안을 코드 예시와 함께 제공해주세요. 변경된 파일과 관련 파일들 간의 잠재적 영향도 분석해주세요. 반드시 지정된 형식(summary와 comments 필드만 포함)의 JSON 형태로 응답해주세요.",
+                },
+            ],
+        });
+        const responseText = message.content[0].text;
+        core.debug(`Claude response: ${responseText}`);
+        return responseText;
+    }
+    async parseClaudeResponse(responseText) {
+        const jsonString = this.extractJsonFromResponse(responseText);
+        try {
+            return this.parseReviewJson(jsonString);
+        }
+        catch (firstError) {
+            core.warning(`First JSON parsing attempt failed: ${firstError instanceof Error ? firstError.message : String(firstError)}`);
+            return this.handleParsingFailure(jsonString, firstError);
+        }
+    }
+    extractJsonFromResponse(responseText) {
+        // Use a more robust regex to capture JSON within ```json ... ``` or just {...}
+        const jsonMatch = responseText.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/) || // Matches ```json { ... } ``` or ``` { ... } ```
+            responseText.match(/(\{[\s\S]*\})/); // Fallback to match any {...} block
+        if (!jsonMatch) {
+            throw new Error("Could not extract JSON review structure from Claude's response");
+        }
+        // Group 1 contains the JSON content if matched by the first regex, otherwise use the full match
+        return (jsonMatch[1] || jsonMatch[0]).trim();
+    }
+    parseReviewJson(jsonString) {
+        // Apply sanitization *before* parsing
+        const sanitizedJson = this.sanitizeJsonString(jsonString);
+        core.debug(`Sanitized JSON string: ${sanitizedJson}`); // Add debug log
+        const review = JSON.parse(sanitizedJson);
+        if (!review.summary || !Array.isArray(review.comments)) {
+            const availableFields = Object.keys(review).join(", ");
+            throw new Error(`Invalid review structure. Available fields: ${availableFields}. Expected 'summary' and 'comments'.`);
+        }
+        const expectedFields = ["summary", "comments"];
+        const actualFields = Object.keys(review);
+        const unexpectedFields = actualFields.filter((key) => !expectedFields.includes(key));
+        if (unexpectedFields.length > 0) {
+            core.warning(`Unexpected fields found in Claude response: ${unexpectedFields.join(", ")}. Keeping only 'summary' and 'comments'.`);
+            return {
+                summary: review.summary,
+                comments: Array.isArray(review.comments)
+                    ? review.comments.map(this.sanitizeComment)
+                    : [], // Sanitize individual comments
+            };
+        }
+        // Sanitize individual comment bodies even if structure is correct
+        return {
+            summary: review.summary,
+            comments: review.comments.map(this.sanitizeComment),
+        };
+    }
+    // New helper method to sanitize individual comment bodies after parsing
+    // biome-ignore lint/suspicious/noExplicitAny: This is a workaround to avoid type errors
+    sanitizeComment(comment) {
+        if (typeof comment.path !== "string" ||
+            typeof comment.line !== "number" ||
+            typeof comment.body !== "string") {
+            core.warning(`Invalid comment structure found: ${JSON.stringify(comment)}. Skipping comment.`);
+            // Return a placeholder or throw, depending on desired strictness
+            return {
+                path: "unknown",
+                line: 0,
+                body: "Error: Invalid comment structure received.",
+            };
+        }
+        // Apply post-parsing cleanup specific to body content if needed
+        // (Example: ensure code blocks are formatted correctly if JSON parse didn't handle markdown well)
+        // This might be redundant if sanitizeJsonString works perfectly, but adds robustness.
+        let body = comment.body;
+        // Example: Re-check code block formatting if necessary
+        body = body
+            .replace(/\\`\\`\\`/g, "```") // Ensure escaped backticks become real ones
+            .replace(/\\`/g, "`");
+        return {
+            path: comment.path,
+            line: comment.line,
+            body: body,
+        };
+    }
+    /**
+     * Cleans the JSON string *before* parsing.
+     * Focuses ONLY on fixing common non-standard escaping issues or structural anomalies
+     * that might come from an LLM, while preserving standard JSON escapes like \" and \n.
+     */
+    sanitizeJsonString(jsonString) {
+        core.debug("Starting JSON sanitization (minimal approach)...");
+        let sanitized = jsonString;
+        // 1. Fix common double-escaping of backslashes. MUST be done first.
+        //    Example: \\" -> \", \\n -> \n, \\` -> \`
+        //    This helps ensure subsequent regex doesn't fail on double escapes.
+        sanitized = sanitized.replace(/\\\\/g, "\\");
+        // 2. Fix incorrectly escaped markdown backticks within JSON strings.
+        //    LLMs might escape markdown syntax. JSON standard doesn't use \`.
+        //    We assume \\\` should be ` and \\`\\`\\` should be ``` within the string content.
+        sanitized = sanitized.replace(/\\`\\`\\`/g, "```"); // \\\`\\\`\\\` -> ```
+        sanitized = sanitized.replace(/\\`/g, "`"); // \\\` -> `
+        // 3. Normalize code block language identifier format, working WITH standard JSON escapes (e.g., \\n).
+        //    Target specific patterns that cause issues, like language identifier alone between \\n.
+        // Pattern A: ``` followed by space/escaped newline(s), language, space/escaped newline(s) -> ```language\\n
+        // Example: ``` \\n kotlin \\n -> ```kotlin\\n
+        sanitized = sanitized.replace(/```\s*(\\n)+\s*([a-z]+)\s*(\\n)+\s*/g, // Look for literal \\n sequences
+        (match, nl1, lang, nl2) => `\`\`\`${lang}\\n`);
+        // Simpler version for ```lang\\n
+        sanitized = sanitized.replace(/```\s*([a-z]+)\s*\\n/g, // Look for ```lang\\n
+        (match, lang) => `\`\`\`${lang}\\n`);
+        // Pattern B: An escaped newline, language identifier, escaped newline, then the start of code.
+        //            This specifically targets the case from the first error.
+        //            Example: "...\nkotlin\n@Transactional..." -> "...\n\`\`\`kotlin\n@Transactional..."
+        //            We need to match literal \\n in the JSON string.
+        // Look for a context character (:, ., }), then \\n, language, \\n, code character
+        sanitized = sanitized.replace(/([:.}])(\\n)([a-z]+)(\\n)(\s*[^`\s{"}])/g, // Match context, \\n, lang, \\n, start of code
+        (match, context, nl1, lang, nl2, codeStart) => {
+            core.debug(`Sanitizing language on escaped new line: ${match}`);
+            // Reconstruct: context + \\n + ``` + language + \\n + codeStart
+            return `${context}${nl1}\`\`\`<span class="math-inline">\{lang\}</span>{nl2}${codeStart}`;
+        });
+        // **** DO NOT UNESCAPE STANDARD JSON SEQUENCES LIKE \\" or \\n ****
+        // JSON.parse handles these correctly. Removing the line below fixes the current error.
+        // sanitized = sanitized.replace(/\\"/g, '"'); // <-- REMOVED / KEPT COMMENTED OUT
+        // **** DO NOT UNESCAPE/RE-ESCAPE \\n or \\t ****
+        // The regex above now works directly with the literal \\n sequence.
+        core.debug("Finished JSON sanitization (minimal approach).");
+        // Return the string with only targeted fixes, letting JSON.parse handle the rest.
+        return sanitized;
+    }
+    // --- Fallback Methods ---
+    // Keep these similar to your original code, but ensure they also benefit
+    // from the refined understanding of the backtick/language issue if needed.
+    // The sanitizeJsonString above should ideally prevent needing these often.
+    async handleParsingFailure(jsonString, originalError) {
+        core.warning("Attempting alternative JSON parsing...");
+        try {
+            // Try parsing with potentially problematic characters removed/fixed by regex
+            // Pass the *original* potentially broken jsonString here
+            return this.alternativeJsonParsing(jsonString);
+        }
+        catch (secondError) {
+            core.warning(`Second JSON parsing attempt failed: ${secondError instanceof Error ? secondError.message : String(secondError)}. Falling back to manual extraction.`);
+            // Pass the *original* potentially broken jsonString here
+            return this.manualExtractionFallback(jsonString);
+        }
+    }
+    // Alternative parsing: less strict, uses regex more heavily
+    alternativeJsonParsing(rawJsonString) {
+        core.debug("Executing alternativeJsonParsing");
+        // Basic sanitization common in many JSON libs (remove control chars except tab/newline/feed)
+        const potentiallyFixableJson = rawJsonString.replace(
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: This is a workaround to avoid type errors
+        /[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
+        // Attempt to extract summary and comments using regex, assuming basic structure might be there
+        const summaryMatch = potentiallyFixableJson.match(/"summary"\s*:\s*"((?:\\.|[^"\\])*)"/);
+        const summary = summaryMatch
+            ? summaryMatch[1]
+                .replace(/\\n/g, "\n")
+                .replace(/\\"/g, '"')
+                .replace(/\\`/g, "`")
+                .replace(/\\`\\`\\`/g, "```")
+            : "Fallback: Could not parse summary.";
+        const comments = [];
+        // Regex to find comment objects - might be fragile
+        const commentBlockMatch = potentiallyFixableJson.match(/"comments"\s*:\s*\[([\s\S]*)\]/);
+        if (commentBlockMatch?.[1]) {
+            const commentObjectsRegex = /\{\s*"path"\s*:\s*"((?:\\.|[^"\\])*)"\s*,\s*"line"\s*:\s*(\d+)\s*,\s*"body"\s*:\s*"((?:\\.|[^"\\])*)"\s*\}/g;
+            let match;
+            match = commentObjectsRegex.exec(commentBlockMatch[1]);
+            while (match !== null) {
                 try {
-                    // Second attempt: Try with JSON5 parsing - more lenient JSON parsing
-                    // This is a simpler approach instead of manually sanitizing characters
-                    // If your project doesn't include json5, you'll need to add it as a dependency
-                    const sanitizedJson = jsonString
-                        .replace(/\n/g, "\\n")
-                        .replace(/\r/g, "\\r")
-                        .replace(/\t/g, "\\t");
-                    // Use a more forgiving JSON parsing approach
-                    // Try with double quotes properly escaped
-                    const reviewText = `{"summary":"${sanitizedJson.match(/"summary"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/)?.[1] || ""}","comments":[]}`;
-                    const review = JSON.parse(reviewText);
-                    // If we got here but there's no content, manually extract comments
-                    if (!review.summary) {
-                        throw new Error("Failed to extract review summary");
-                    }
-                    // Extract comments using regex if they exist
-                    const commentMatches = Array.from(jsonString.matchAll(/"path"\s*:\s*"([^"]*)"\s*,\s*"line"\s*:\s*(\d+)\s*,\s*"body"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/g));
-                    if (commentMatches.length > 0) {
-                        review.comments = commentMatches.map((match) => ({
-                            path: match[1],
-                            line: Number.parseInt(match[2], 10),
-                            body: match[3].replace(/\\n/g, "\n").replace(/\\"/g, '"'),
-                        }));
-                    }
-                    return review;
+                    const body = match[3]
+                        .replace(/\\n/g, "\n")
+                        .replace(/\\"/g, '"')
+                        // Handle potential escaped backticks AFTER primary unescaping
+                        .replace(/\\`\\`\\`/g, "```")
+                        .replace(/\\`/g, "`")
+                        // Re-apply the fix for language identifiers on new lines
+                        .replace(/\n([a-z]+)\n(\s*[^`\s])/g, "\n```$1\n$2");
+                    comments.push({
+                        path: match[1].replace(/\\\\/g, "\\"), // Handle escaped backslashes in path
+                        line: Number.parseInt(match[2], 10),
+                        body: body,
+                    });
                 }
-                catch (secondError) {
-                    core.warning(`Second JSON parsing attempt failed: ${secondError instanceof Error ? secondError.message : String(secondError)}`);
-                    // Last resort: Manual extraction
-                    try {
-                        const summaryRegex = /"summary"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/;
-                        const summaryMatch = jsonString.match(summaryRegex);
-                        const summary = summaryMatch
-                            ? summaryMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"')
-                            : "코드 리뷰 요약을 파싱할 수 없습니다.";
-                        const comments = [];
-                        const commentRegex = /"path"\s*:\s*"([^"]*)"\s*,\s*"line"\s*:\s*(\d+)\s*,\s*"body"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/g;
-                        let match = null;
-                        match = commentRegex.exec(jsonString);
-                        while (match !== null) {
-                            comments.push({
-                                path: match[1],
-                                line: Number.parseInt(match[2], 10),
-                                body: match[3].replace(/\\n/g, "\n").replace(/\\"/g, '"'),
-                            });
-                            match = commentRegex.exec(jsonString);
-                        }
-                        core.info(`Manually extracted ${comments.length} comments`);
-                        return { summary, comments };
-                    }
-                    catch (manualError) {
-                        core.error(`Manual extraction failed: ${manualError instanceof Error ? manualError.message : String(manualError)}`);
-                        // Ultimate fallback
-                        return {
-                            summary: "코드 리뷰 응답 파싱에 실패했습니다. JSON 형식이 올바르지 않습니다.",
-                            comments: [],
-                        };
-                    }
+                catch (e) {
+                    core.warning(`Error parsing individual comment in alternative method: ${e}`);
                 }
+                match = commentObjectsRegex.exec(commentBlockMatch[1]);
             }
         }
-        catch (error) {
-            if (error instanceof Error) {
-                core.error(`Claude API 호출 중 오류 발생: ${error.message}`);
-                return {
-                    summary: `Claude 코드 리뷰 생성 중 오류가 발생했습니다: ${error.message}`,
-                    comments: [],
-                };
+        if (!summaryMatch && comments.length === 0) {
+            throw new Error("Alternative parsing failed to extract any useful data.");
+        }
+        core.info(`Alternative parsing extracted summary and ${comments.length} comments.`);
+        return { summary, comments };
+    }
+    // Manual extraction: Last resort, pure regex on the raw string
+    manualExtractionFallback(rawResponseText) {
+        core.debug("Executing manualExtractionFallback");
+        try {
+            // Extract summary (more forgiving regex)
+            const summaryRegex = /"summary"\s*:\s*"((?:\\.|[^"\\])*)"/; // Capture content of summary string
+            const summaryMatch = rawResponseText.match(summaryRegex);
+            const summary = summaryMatch
+                ? summaryMatch[1]
+                    .replace(/\\n/g, "\n")
+                    .replace(/\\"/g, '"')
+                    .replace(/\\`/g, "`")
+                    .replace(/\\`\\`\\`/g, "```")
+                : "Fallback: Could not parse summary.";
+            const comments = [];
+            // Extract comment objects (more forgiving regex)
+            const commentRegex = /\{\s*"path"\s*:\s*"((?:\\.|[^"\\])*)"\s*,\s*"line"\s*:\s*(\d+)\s*,\s*"body"\s*:\s*"((?:\\.|[^"\\])*)"\s*\}/g;
+            let match;
+            match = commentRegex.exec(rawResponseText);
+            while (match !== null) {
+                try {
+                    const body = match[3]
+                        .replace(/\\n/g, "\n")
+                        .replace(/\\"/g, '"')
+                        // Handle potential escaped backticks AFTER primary unescaping
+                        .replace(/\\`\\`\\`/g, "```")
+                        .replace(/\\`/g, "`")
+                        // Re-apply the fix for language identifiers on new lines
+                        .replace(/\n([a-z]+)\n(\s*[^`\s])/g, "\n```$1\n$2");
+                    comments.push({
+                        path: match[1].replace(/\\\\/g, "\\"), // Handle escaped backslashes in path
+                        line: Number.parseInt(match[2], 10),
+                        body: body,
+                    });
+                }
+                catch (e) {
+                    core.warning(`Error parsing individual comment in manual fallback: ${e}`);
+                }
+                match = commentRegex.exec(rawResponseText);
             }
-            core.error("Claude API 호출 중 알 수 없는 오류가 발생했습니다");
+            core.info(`Manual fallback extracted summary and ${comments.length} comments.`);
+            if (!summaryMatch && comments.length === 0) {
+                core.error("Manual extraction failed to find summary or comments.");
+                throw new Error("Manual extraction failed."); // Trigger ultimate fallback
+            }
+            return { summary, comments };
+        }
+        catch (manualError) {
+            core.error(`Manual extraction failed critically: ${manualError instanceof Error ? manualError.message : String(manualError)}`);
+            // Ultimate fallback
             return {
-                summary: "알 수 없는 오류로 코드 리뷰를 생성할 수 없습니다",
+                summary: "Code review response parsing failed completely. The response format might be severely incorrect.",
                 comments: [],
             };
         }
+    }
+    handleGenerationError(error) {
+        if (error instanceof Error) {
+            core.error(`Error during Claude review generation: ${error.message}`);
+            // Include stack trace in debug log if available
+            if (error.stack) {
+                core.debug(error.stack);
+            }
+            return {
+                summary: `Error generating code review: ${error.message}`,
+                comments: [],
+            };
+        }
+        core.error("Unknown error during Claude review generation");
+        return {
+            summary: "Unknown error generating code review.",
+            comments: [],
+        };
     }
 }
 exports.ClaudeService = ClaudeService;
@@ -41986,37 +42179,63 @@ class AndroidPromptTemplate {
 
 Android 프로젝트 관련 추가 지침:
 
-1. 아키텍처 및 구조:
-   - MVVM, MVP, MVC 등의 아키텍처 패턴이 일관되게 적용되었는지 확인하세요.
-   - 비즈니스 로직이 UI 코드에서 분리되었는지 확인하세요.
-   - Clean Architecture 원칙이 준수되고 있는지 평가하세요.
+1. 아키텍처 및 설계 패턴:
+   - 클린 아키텍처: 계층 간 명확한 책임 분리와 의존성 규칙 준수를 평가하세요(데이터, 도메인, 표현 계층).
+   - MVVM/MVI 구현: ViewModel과 View의 적절한 분리, 단방향 데이터 흐름 패턴을 확인하세요.
+   - 의존성 주입: Hilt/Dagger의 효과적인 활용과 테스트 용이성을 위한 구성을 평가하세요.
+   - 모듈화: 재사용 가능하고 독립적인 기능 모듈의 구현을 확인하세요.
+   - SOLID 원칙: 특히 단일 책임 원칙과 의존성 역전 원칙의 준수를 검토하세요.
 
-2. 생명주기 관리:
-   - Activity/Fragment 생명주기 메서드의 적절한 사용을 확인하세요.
-   - 메모리 누수 위험이 있는 코드를 식별하세요(예: 익명 내부 클래스, 비정상적 참조 유지).
-   - ViewModel과 LiveData/Flow의 올바른 사용을 확인하세요.
+2. Kotlin 언어 활용:
+   - 코틀린 특성: 확장 함수, 고차 함수, Scope 함수(let, apply, with, run)의 효과적인 활용을 확인하세요.
+   - 널 안전성: 'null'에 안전한 코드 작성과 '!!' 연산자 사용 최소화를 권장하세요.
+   - 코루틴: 비동기 작업에 코루틴과 Flow의 적절한 활용을 확인하세요.
+   - 함수형 프로그래밍: 불변성, 순수 함수, 부작용 최소화 원칙 준수를 평가하세요.
+   - 최신 문법: 코틀린 1.5+ 버전의 새로운 기능(예: 인라인 클래스, 시퀀스 빌더)의 활용을 권장하세요.
 
-3. UI/UX 고려사항:
-   - UI 스레드 차단 코드를 식별하고 백그라운드 처리를 권장하세요.
-   - RecyclerView/ListView의 효율적인 구현을 확인하세요.
-   - 화면 방향 변경 및 다양한 화면 크기 대응을 확인하세요.
+3. Jetpack 컴포넌트 활용:
+   - Compose UI: 컴포저블 함수의 재사용성, 상태 관리, 이펙트 처리 방식을 평가하세요.
+   - ViewModel: 생명주기 인식 데이터 관리와 UI 상태 노출 방식을 확인하세요.
+   - Navigation: 딥 링크, 인수 전달, 트랜지션 처리의 적절한 구현을 확인하세요.
+   - Room: 데이터베이스 스키마 설계, 관계 매핑, 쿼리 최적화를 검토하세요.
+   - DataStore: SharedPreferences 대신 DataStore 사용과 적절한 유형(Preferences/Proto) 선택을 권장하세요.
 
-4. 성능 최적화:
-   - 불필요한 객체 생성을 식별하세요.
-   - ANR 가능성이 있는 코드를 식별하세요.
-   - 배터리 소모를 줄이기 위한 최적화 방안을 제안하세요.
+4. 생명주기 및 메모리 관리:
+   - 메모리 누수: Activity/Fragment 참조를 유지하는 비정상적 패턴을 식별하세요.
+   - 수명 주기 인식: 수명 주기 이벤트에 대한 적절한 반응과 리소스 해제를 확인하세요.
+   - 프로세스 복원: 구성 변경 및 프로세스 재생성 시 상태 보존 메커니즘을 평가하세요.
+   - 백그라운드 작업: WorkManager, Foreground Service의 적절한 사용과 배터리 효율성을 검토하세요.
+   - 저전력 모드: 도즈 모드와 앱 대기 최적화 대응 방식을 확인하세요.
 
-5. 현대적 안드로이드 개발:
-   - Kotlin 언어 기능(확장 함수, 코루틴, flow 등)의 적절한 활용을 권장하세요.
-   - Jetpack 컴포넌트의 활용을 장려하세요.
-   - Compose UI 전환 가능성을 검토하세요.
+5. UI/UX 및 성능:
+   - 반응형 UI: 사용자 입력에 즉시 반응하는 UI 구현과 ANR 방지 전략을 평가하세요.
+   - 애니메이션: 매끄러운 애니메이션과 전환을 위한 프레임 드롭 방지 방법을 검토하세요.
+   - 레이아웃 성능: 중첩된 레이아웃 최소화, ConstraintLayout 활용, 렌더링 최적화를 권장하세요.
+   - 리스트 성능: RecyclerView와 ListAdapter의 효율적인 구현과 DiffUtil 활용을 확인하세요.
+   - 지연 로딩: 큰 이미지와 리소스의 지연 로딩 전략을 평가하세요.
 
-6. 네트워크 및 데이터:
-   - Retrofit과 같은 현대적 라이브러리 사용을 권장하세요.
-   - Room 데이터베이스의 적절한 활용을 확인하세요.
-   - 네트워크 에러 처리 및 오프라인 모드 지원을 확인하세요.
+6. 보안 및 데이터 처리:
+   - 민감 데이터: EncryptedSharedPreferences, Biometric API, Keystore의 적절한 활용을 확인하세요.
+   - 네트워크 보안: HTTPS 사용, 인증서 고정, 네트워크 보안 구성의 적절한 설정을 평가하세요.
+   - 입력 검증: 사용자 입력 및 API 응답의 적절한 유효성 검사를 확인하세요.
+   - 권한 처리: 최소 권한 원칙과 런타임 권한 요청의 적절한 구현을 평가하세요.
+   - 데이터 노출: 로그, 클립보드, IPC를 통한 민감 정보 노출 가능성을 검토하세요.
 
-이러한 추가 지침을 고려하여 Android 프로젝트에 특화된 코드 리뷰를 제공해주세요.
+7. 테스트 및 유지보수성:
+   - 단위 테스트: ViewModel, UseCase, Repository의 테스트 용이성과 테스트 범위를 평가하세요.
+   - UI 테스트: Espresso, Compose UI 테스트의 구현을 확인하세요.
+   - 모의 객체: 테스트를 위한 모의 객체와 의존성 주입 구조의 적합성을 검토하세요.
+   - 코드 품질: 정적 분석 도구(ktlint, detekt) 활용과 코딩 규약 준수를 권장하세요.
+   - 문서화: 복잡한 로직과 공용 API에 대한 KDoc 문서화를 확인하세요.
+
+8. 앱 크기 및 최적화:
+   - R8/ProGuard: 적절한 코드 최소화와 난독화 룰 설정을 확인하세요.
+   - 앱 번들: 동적 기능 모듈과 앱 번들 구현을 통한 앱 크기 최적화를 권장하세요.
+   - 리소스 최적화: 이미지 압축, 벡터 드로어블 활용, 리소스 한정자의 적절한 사용을 평가하세요.
+   - 온디맨드 기능: 동적 전달 또는 플레이 기능 API를 활용한 필요 시 설치 기능 구현을 검토하세요.
+   - 다양한 기기 지원: 다양한 화면 크기, 폴더블, 태블릿 지원을 위한 UI 조정을 확인하세요.
+
+이러한 지침을 바탕으로 모던 Android 개발 모범 사례를 반영한 깊이 있는 코드 리뷰를 제공해주세요. 각 항목에 대해 구체적인 코드 예시를 포함한 실행 가능한 개선 방안을 제시하세요.
 `;
     }
 }
@@ -42055,32 +42274,38 @@ class BasePromptTemplate {
     generatePrompt(context) {
         const { files, relatedFiles } = context;
         let prompt = `
-경험 많은 시니어 개발자로서, 다음 변경사항들에 대해 전체적이고 간결한 코드 리뷰를 수행해주세요.
+당신은 10+ 경력의 시니어 개발자이며 깊이 있는 코드 리뷰 전문가입니다. 다음 변경사항에 대해 철저하고 구체적인 코드 리뷰를 수행해주세요.
 
 리뷰 지침:
-1. 모든 변경사항을 종합적으로 검토하고, 가장 중요한 문제점이나 개선사항에만 집중하세요.
-2. 파일별로 개별 리뷰를 하지 말고, 전체 변경사항에 대한 통합된 리뷰를 제공하세요.
-3. 각 주요 이슈에 대해 간단한 설명과 구체적인 개선 제안을 제시하세요.
-4. 개선 제안에는 실제 코드 예시를 포함하세요. 단, 코드 예시는 제공한 코드와 연관된 코드여야 합니다.
-5. 사소한 스타일 문제나 개인적 선호도는 무시하세요.
-6. 심각한 버그, 성능 문제, 또는 보안 취약점이 있는 경우에만 언급하세요.
-7. 전체 리뷰는 간결하게 유지하세요.
-8. 변경된 부분만 집중하여 리뷰하고, 이미 개선된 코드를 다시 지적하지 마세요.
-9. 기존에 이미 개선된 사항(예: 중복 코드 제거를 위한 함수 생성)을 인식하고 이를 긍정적으로 언급하세요.
-10. 변경된 파일과 관련된 다른 파일들에 미칠 수 있는 영향을 분석하세요.
+1. 코드 품질 분석: 가독성, 유지보수성, 확장성 측면에서 코드를 분석하세요.
+2. 핵심 이슈 우선순위화: 가장 중요한 문제점에 집중하고, 심각성 순으로 정렬하세요.
+3. 구체적인 개선 제안: 모든 이슈에 대해 실행 가능한 해결책과 구체적인 코드 예시를 제공하세요.
+4. 아키텍처 및 설계 검토: 설계 패턴의 적절한 사용과 코드 구조를 평가하세요.
+5. 성능 분석: 잠재적인 성능 병목 현상을 식별하고 최적화 방안을 제안하세요.
+6. 보안 취약점 검토: 보안 위험을 식별하고 완화 방법을 제안하세요.
+7. 테스트 적합성: 코드의 테스트 용이성을 평가하고 필요한 테스트 케이스를 제안하세요.
+8. 기술 부채 식별: 향후 문제를 일으킬 수 있는 코드 영역을 식별하세요.
+9. 장점 인식: 잘 작성된 코드와 이미 개선된 부분을 적극적으로 인정하세요.
+10. 파급 효과 분석: 변경 사항이 관련 파일과 전체 시스템에 미치는 영향을 평가하세요.
 
 리뷰 형식:
-- 개선된 사항: [이미 개선된 부분에 대한 긍정적 언급]
-- 주요 이슈 (있는 경우에만):
-  1. [문제 설명]
-     - 제안: [개선 방안 설명]
+- 요약: [변경사항에 대한 간결한 3-5줄 요약, 전반적인 품질과 주요 관심사 포함]
+- 긍정적 측면:
+  1. [특히 뛰어난 코드 또는 개선된 부분 설명]
+  2. ...
+- 주요 이슈:
+  1. [이슈 제목: 심각도(높음/중간/낮음)]
+     - 문제: [구체적인 문제 설명]
+     - 영향: [이 이슈가 미치는 잠재적 영향]
+     - 해결책: [구체적인 개선 방안]
      \`\`\`
-     // 수정된 코드 예시
+     // 개선된 코드 예시
      \`\`\`
   2. ...
-- 관련 파일에 대한 영향 분석:
-  [변경된 파일과 관련된 다른 파일들에 미칠 수 있는 잠재적 영향 설명]
-- 전반적인 의견: [1-2문장으로 요약]
+- 관련 파일 영향 분석:
+  [변경사항이 관련 파일과 전체 시스템에 미치는 영향]
+- 추가 권장사항:
+  [일반적인 코드 품질 개선을 위한 제안과 리소스 제공]
 
 변경된 파일들:
 `;
@@ -42119,6 +42344,8 @@ class BasePromptTemplate {
 1. JSON 응답에서 한글을 사용할 때 추가 이스케이프를 하지 마세요 (\\u로 시작하는 유니코드 이스케이프).
 2. 완전히 유효한 UTF-8 인코딩된 문자를 그대로 사용하세요.
 3. 특수 문자나 제어 문자만 이스케이프 처리하고, 한글과 같은 비라틴 문자는 그대로 두세요.
+
+코드 리뷰의 목표는 단순히 문제를 지적하는 것이 아니라, 개발자가 더 나은 코드를 작성하도록 구체적인 지침과 교육적 피드백을 제공하는 것임을 기억하세요.
 `;
         return prompt;
     }
@@ -42145,38 +42372,56 @@ class NextJsPromptTemplate {
 
 Next.js 프로젝트 관련 추가 지침:
 
-1. 렌더링 최적화:
-   - 서버 컴포넌트와 클라이언트 컴포넌트의 적절한 사용을 확인하세요.
-   - 불필요한 클라이언트 사이드 렌더링을 식별하고 서버 컴포넌트로의 전환을 권장하세요.
-   - 정적 생성(SSG)과 서버 사이드 렌더링(SSR)의 적절한 활용을 확인하세요.
+1. 아키텍처 및 컴포넌트 설계:
+   - 컴포넌트 분리: 컴포넌트가 단일 책임 원칙을 따르고 있는지 확인하고, 과도하게 큰 컴포넌트의 분리를 제안하세요.
+   - 폴더 구조: 프로젝트 구조가 기능별, 도메인별로 잘 구성되어 있는지 평가하세요.
+   - 코드 재사용: 중복 로직을 식별하고 커스텀 훅, 유틸리티 함수 또는 공통 컴포넌트로의 추출을 권장하세요.
+   - 일관된 패턴: 컴포넌트 패턴(Compound, Render Props, HOC)이 일관되게 적용되었는지 확인하세요.
+   - 합성 모델: 복잡한 상속 대신 컴포넌트 합성을 권장하세요.
 
-2. 라우팅 및 데이터 페칭:
-   - App Router와 Pages Router의 일관된 사용을 확인하세요.
-   - Next.js의 데이터 페칭 메서드(getServerSideProps, getStaticProps, fetch 등)의 적절한 사용을 평가하세요.
-   - 불필요한 리렌더링을 유발하는 코드를 식별하세요.
+2. 서버 컴포넌트와 클라이언트 컴포넌트:
+   - 적절한 분리: "use client" 지시어의 적절한 사용과 서버/클라이언트 컴포넌트 경계를 검토하세요.
+   - 데이터 흐름: 서버 컴포넌트에서 클라이언트 컴포넌트로의 데이터 전달 패턴을 평가하세요.
+   - 트리쉐이킹: 클라이언트 번들 크기 최소화를 위한 서버 컴포넌트 활용을 권장하세요.
+   - 인터랙티브 요소: 상호작용이 필요한 UI 요소만 클라이언트 컴포넌트로 구현되었는지 확인하세요.
+   - 스트리밍: React Suspense와 함께 스트리밍 응답을 활용하고 있는지 확인하세요.
 
-3. 상태 관리:
-   - 전역 상태 관리의 필요성과 그 구현을 평가하세요(Context API, Redux, Zustand 등).
-   - 컴포넌트 간 상태 공유가 효율적으로 이루어지는지 확인하세요.
-   - 서버 상태와 클라이언트 상태의 적절한 분리를 확인하세요.
+3. 데이터 페칭 및 상태 관리:
+   - 서버 상태 vs 클라이언트 상태: 서버/클라이언트 상태의 명확한 구분과 적절한 관리 방식을 평가하세요.
+   - 캐싱 전략: fetch API의 캐싱 옵션, React Query/SWR 활용 여부를 확인하세요.
+   - 병렬 데이터 로딩: 데이터 요청이 병렬로 이루어지는지 확인하세요.
+   - 전역 상태 관리: Context API, Zustand, Jotai, Redux 등의 상태 관리 라이브러리 사용이 적절한지 평가하세요.
+   - 서버 액션: 폼 제출 등에 서버 액션이 효과적으로 활용되고 있는지 확인하세요.
 
-4. 성능 고려사항:
-   - 불필요한 번들 크기 증가 요소를 식별하세요.
-   - 이미지 최적화(next/image)의 사용을 확인하세요.
-   - 컴포넌트 메모이제이션(React.memo, useMemo, useCallback)의 적절한
-   - 사용을 확인하세요.
+4. 라우팅 및 레이아웃:
+   - App Router 구조: page.tsx, layout.tsx, loading.tsx, error.tsx 등의 파일 구조가 적절히 활용되는지 확인하세요.
+   - 중첩 레이아웃: 공통 UI 요소를 위한 중첩 레이아웃의 효율적 활용을 평가하세요.
+   - 병렬 라우트: 분할된 화면 레이아웃을 위한 병렬 라우트 사용을 확인하세요.
+   - 인터셉팅 라우트: 모달 및 심층 UI 경험을 위한 인터셉팅 라우트 활용을 검토하세요.
+   - 미들웨어: 인증, 리디렉션 등을 위한 미들웨어의 적절한 구현을 확인하세요.
 
-5. 타입스크립트 활용:
-   - 엄격한 타입 검사를 위한 설정을 권장하세요.
-   - any 타입의 사용을 지양하고 구체적인 타입 정의를 권장하세요.
-   - 재사용 가능한 타입 정의와 인터페이스의 활용을 확인하세요.
+5. 성능 최적화:
+   - 이미지 최적화: next/image 컴포넌트의 적절한 활용과 속성 구성을 확인하세요.
+   - 번들 크기: 큰 종속성의 동적 임포트와 코드 분할을 권장하세요.
+   - 메모이제이션: 불필요한 리렌더링을 방지하기 위한 React.memo, useMemo, useCallback의 전략적 사용을 확인하세요.
+   - 폰트 최적화: next/font를 사용한 웹 폰트 최적화를 권장하세요.
+   - 성능 측정: Core Web Vitals 개선을 위한 전략을 제안하세요.
 
-6. 접근성 및 SEO:
-   - 시맨틱 HTML 요소의 적절한 사용을 확인하세요.
-   - alt 속성, ARIA 속성 등 접근성 관련 속성의 사용을 확인하세요.
-   - SEO 최적화를 위한 메타 태그의 사용을 확인하세요.
+6. 타입스크립트 및 개발자 경험:
+   - 타입 안전성: any 사용 최소화와 구체적인 타입 정의를 권장하세요.
+   - 타입 추론: 과도한 타입 선언 대신 타입 추론을 활용하는 균형을 평가하세요.
+   - 경로 별칭: 깊은 상대 경로 대신 경로 별칭 사용을 권장하세요.
+   - 환경 변수: 환경 변수의 안전한 사용과 타입 검사를 확인하세요.
+   - 코드 분할과 지연 로딩: next/dynamic을 활용한 컴포넌트 지연 로딩을 권장하세요.
 
-이러한 추가 지침을 고려하여 Next.js 프로젝트에 특화된 코드 리뷰를 제공해주세요.
+7. 접근성 및 국제화:
+   - 시맨틱 HTML: 적절한 HTML5 시맨틱 요소 사용을 확인하세요.
+   - ARIA 속성: 접근성 향상을 위한 ARIA 역할과 속성의 올바른 사용을 평가하세요.
+   - 키보드 탐색: 키보드만으로 모든 기능을 사용할 수 있는지 확인하세요.
+   - 다국어 지원: next-intl 또는 next-i18next를 활용한 국제화 구현을 검토하세요.
+   - RTL 지원: 필요한 경우 오른쪽에서 왼쪽으로 읽는 언어 지원을 확인하세요.
+
+이러한 지침을 바탕으로 Next.js의 최신 기능과 모범 사례를 고려한 구체적인 코드 리뷰를 제공해주세요. 각 이슈에 대해 실제 코드 예시를 포함한 실행 가능한 개선 방안을 제시하세요.
 `;
     }
 }
@@ -42202,32 +42447,49 @@ class SpringBootPromptTemplate {
 
 Spring Boot 프로젝트 관련 추가 지침:
 
-1. 아키텍처 및 구조:
-   - 계층 구조(Controller, Facade, Service, Repository)가 적절히 구분되었는지 확인하세요.
-   - DTO, Entity, VO 객체의 적절한 사용을 평가하세요.
-   - 관심사 분리가 잘 되어 있는지 확인하세요.
+1. 아키텍처 및 계층 구조:
+   - 클린 아키텍처: 도메인 중심 설계와 계층 간 명확한 경계가 있는지 검토하세요.
+   - 계층 분리: Controller, Service, Repository 계층이 명확히 분리되었는지 확인하고, 불필요한 의존성을 식별하세요.
+   - 비즈니스 로직 위치: 비즈니스 로직이 도메인 모델이나 서비스 계층에 적절히 배치되었는지 확인하세요.
+   - DTO 활용: Entity와 DTO의 구분이 명확하고, Entity가 표현 계층까지 노출되지 않는지 확인하세요.
+   - 모듈화: 기능별 모듈화가 잘 되어 있는지 확인하고, 패키지 구조를 평가하세요.
 
-2. Spring 이디엄 및 패턴:
-   - @Transactional 어노테이션의 적절한 사용을 확인하세요.
-   - DI(의존성 주입)이 생성자 주입 방식으로 구현되었는지 권장하세요.
-   - @Autowired 필드 주입보다 생성자 주입을 권장하세요.
+2. Spring 프레임워크 활용:
+   - DI 최적화: 생성자 주입 방식을 사용하는지 확인하고, @Autowired 필드 주입을 지양하세요.
+   - 트랜잭션 관리: @Transactional 어노테이션의 적절한 범위와 전파 설정을 확인하세요.
+   - Bean 생명주기: Bean 생명주기 콜백 메서드의 올바른 사용을 확인하세요.
+   - 프로파일 활용: 환경별 구성을 위한 @Profile 사용을 확인하세요.
+   - 조건부 구성: @ConditionalOn* 어노테이션을 통한 유연한 자동 구성을 권장하세요.
 
-3. 성능 고려사항:
-   - N+1 쿼리 문제가 발생할 수 있는 코드를 확인하세요.
-   - 불필요한 데이터베이스 호출이 있는지 확인하세요.
-   - 캐싱 적용이 필요한 부분을 식별하세요.
+3. 데이터 액세스 및 성능:
+   - N+1 쿼리 방지: 연관 엔티티 로딩 시 fetch join, EntityGraph, BatchSize 활용을 권장하세요.
+   - 쿼리 최적화: JPQL, Querydsl, 또는 네이티브 쿼리의 적절한 사용을 평가하세요.
+   - 페이지네이션: 대용량 데이터 처리 시 페이지네이션 적용을 확인하세요.
+   - 캐싱 전략: @Cacheable을 활용한 적절한 캐싱 구현을 확인하세요.
+   - 비동기 처리: @Async 및 CompletableFuture를 활용한 비동기 처리 기회를 식별하세요.
 
-4. 예외 처리:
-   - 전역 예외 처리기의 사용을 확인하세요.
-   - 비즈니스 로직에 맞는 커스텀 예외를 사용하는지 확인하세요.
-   - try-catch 블록이 적절히 사용되었는지 확인하세요.
+4. 보안 및 예외 처리:
+   - 인증/인가: Spring Security 구성의 적절성과 보안 모범 사례 준수를 확인하세요.
+   - 입력 검증: @Valid, @Validated를 활용한 입력 유효성 검증을 확인하세요.
+   - 예외 계층: 도메인별 커스텀 예외 계층 구조를 권장하세요.
+   - 전역 예외 처리: @ControllerAdvice를 활용한 일관된 예외 처리를 확인하세요.
+   - 보안 취약점: SQL 인젝션, XSS, CSRF 방지 조치를 확인하세요.
 
-5. 보안:
-   - SQL 인젝션 방지를 위해 JPA 또는 명명된 파라미터를 사용하는지 확인하세요.
-   - 인증/인가 코드의 적절한 구현을 확인하세요.
-   - 민감한 정보가 로그에 노출되지 않는지 확인하세요.
+5. API 설계 및 문서화:
+   - RESTful 원칙: HTTP 메서드, 상태 코드, 리소스 명명 규칙의 적절한 사용을 평가하세요.
+   - API 버전 관리: API 버전 관리 전략이 적용되었는지 확인하세요.
+   - Swagger/OpenAPI: API 문서화 도구의 활용을 확인하고 권장하세요.
+   - HATEOAS: 필요한 경우 HATEOAS 원칙 적용을 권장하세요.
+   - 응답 형식: 일관된 응답 형식과 적절한 HTTP 상태 코드 사용을 확인하세요.
 
-이러한 추가 지침을 고려하여 Spring Boot 프로젝트에 특화된 코드 리뷰를 제공해주세요.
+6. 테스트 및 유지보수성:
+   - 단위 테스트: 서비스 및 도메인 로직에 대한 단위 테스트 작성을 권장하세요.
+   - 통합 테스트: @SpringBootTest를 활용한 통합 테스트 구현을 확인하세요.
+   - 테스트 가능성: 코드가 테스트하기 쉽게 설계되었는지 평가하세요(의존성 주입, 모킹 용이성).
+   - 로깅 전략: 적절한 로깅 레벨과 컨텍스트 정보 제공을 확인하세요.
+   - 모니터링 지원: Actuator 엔드포인트 활용 및 메트릭 노출을 권장하세요.
+
+이러한 지침을 바탕으로 Spring Boot 프로젝트의 코드 품질, 성능, 보안 및 유지보수성을 종합적으로 평가하고, 구체적인 개선 방안을 제시해주세요.
 `;
     }
 }
@@ -42253,28 +42515,41 @@ class UnityPromptTemplate {
 
 Unity 프로젝트 관련 추가 지침:
 
-1. 성능 고려사항:
-   - Update() 메서드에서 무거운 연산이 있는지 확인하세요.
-   - GetComponent() 호출이 반복문 내에 있는지 확인하고, 캐싱을 제안하세요.
-   - 오브젝트 풀링이 적용 가능한 상황인지 평가하세요.
-   - 불필요한 Instantiate/Destroy 호출을 찾아 최적화 방안을 제안하세요.
+1. 성능 최적화:
+   - 프레임 레이트 영향: Update()와 FixedUpdate() 메서드 내 무거운 연산을 찾아 최적화 방안을 제시하세요.
+   - 메모리 관리: 불필요한 GameObject 생성/파괴 패턴을 찾고 오브젝트 풀링 구현을 권장하세요.
+   - 컴포넌트 캐싱: GetComponent() 호출이 반복문이나 Update() 내부에 있는지 확인하고 캐싱 패턴을 제안하세요.
+   - 물리 연산: Physics 관련 호출의 최적화와 레이어 마스크 활용을 권장하세요.
+   - 배치 처리: 가능한 경우 DrawMeshInstanced와 같은 배치 렌더링 기법을 제안하세요.
 
-2. 코드 구조:
-   - MonoBehaviour를 적절히 활용하고 있는지 확인하세요.
-   - 싱글톤 패턴의 올바른 구현을 확인하고, 의존성 주입을 고려하세요.
-   - 컴포넌트 간 통신 방식이 효율적인지 평가하세요.
+2. 아키텍처 및 설계 패턴:
+   - 컴포넌트 기반 설계: 단일 책임 원칙을 준수하는 작고 집중된 컴포넌트 구성을 권장하세요.
+   - 의존성 주입: MonoBehaviour 싱글톤 대신 ScriptableObject 기반 서비스 로케이터나 DI 패턴을 권장하세요.
+   - 이벤트 시스템: UnityEvent 또는 C# 이벤트를 활용한 컴포넌트 간 느슨한 결합을 제안하세요.
+   - 상태 관리: 상태 패턴이나 상태 머신 구현을 통한 복잡한 게임 로직 관리를 권장하세요.
+   - 모듈성: ScriptableObject를 활용한 모듈식 데이터 설계를 평가하세요.
 
-3. 안전성:
-   - null 참조 가능성을 확인하고, [SerializeField] 또는 RequireComponent 속성 사용을 권장하세요.
-   - 코루틴 관리가 적절한지 확인하세요.
-   - 이벤트 구독/해제가 짝을 이루는지 확인하세요.
+3. 코드 품질 및 안전성:
+   - null 참조 방지: [SerializeField], RequireComponent 속성 사용 또는 null 체크를 권장하세요.
+   - 네이밍 컨벤션: Unity 스타일 가이드에 맞는 일관된 네이밍 패턴을 권장하세요.
+   - 코루틴 관리: 코루틴의 적절한 시작/중지와 참조 관리를 검증하세요.
+   - 이벤트 처리: 이벤트 구독/해제 쌍이 적절히 구현되었는지 확인하세요.
+   - 예외 처리: try-catch 블록의 적절한 사용과 견고한 에러 처리를 권장하세요.
 
-4. Unity 특화 패턴:
-   - ScriptableObject 활용 기회를 찾으세요.
-   - Unity의 새로운 Input System을 사용할 것을 권장하세요.
-   - GameObject.Find() 및 싱글톤 대신 의존성 주입 패턴을 권장하세요.
+4. 현대적 Unity 개발 관행:
+   - 새로운 Input System: 레거시 Input 대신 새로운 Input System 사용을 권장하세요.
+   - 비동기 패턴: async/await 패턴과 UniTask 사용을 통한 코루틴 대체 방안을 제안하세요.
+   - DOTS 적용 가능성: 대규모 성능 요구 사항이 있는 경우 Entity Component System(ECS) 도입을 검토하세요.
+   - Universal Render Pipeline: 프로젝트에 적합한 경우 URP 도입을 고려하세요.
+   - 애셋 관리: Addressables 시스템을 활용한 효율적인 애셋 로딩을 제안하세요.
 
-이러한 추가 지침을 고려하여 Unity 프로젝트에 특화된 코드 리뷰를 제공해주세요.
+5. 에디터 및 개발자 경험:
+   - 커스텀 에디터: 반복 작업을 줄이는 커스텀 에디터 툴 개발을 권장하세요.
+   - 디버깅 도구: 게임 내 디버깅 도구와 개발자 콘솔 구현을 제안하세요.
+   - 시각적 피드백: Gizmos와 Debug.DrawLine을 활용한 시각적 디버깅 구현을 권장하세요.
+   - 에디터 속성: [Header], [Tooltip] 등의 Inspector 속성을 통한 가독성 향상을 제안하세요.
+
+프로젝트의 규모와 목적에 맞게 이러한 지침을 적용하여, Unity 게임 개발 모범 사례를 반영한 구체적이고 실행 가능한 코드 리뷰를 제공해주세요.
 `;
     }
 }

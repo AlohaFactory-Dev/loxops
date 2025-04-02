@@ -1,7 +1,7 @@
 {
   "name": "loxops",
   "homepage": "https://github.com/AlohaFactory-Dev/loxops",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "GitHub Action for automated code reviews using Claude AI",
   "main": "dist/index.js",
   "scripts": {

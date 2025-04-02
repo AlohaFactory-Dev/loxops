@@ -1,0 +1,43 @@
+name: 'Code Review Assistant'
+description: 'Automated code reviews using Claude AI with support for various project types'
+author: 'Aloha Factory'
+
+inputs:
+  github-token:
+    description: 'GitHub token for API authentication'
+    required: true
+  claude-api-key:
+    description: 'Claude API key'
+    required: true
+  project-type:
+    description: 'Project type (unity, springboot, android, nextjs, or auto)'
+    required: false
+    default: 'auto'
+  file-extensions:
+    description: 'Comma-separated list of file extensions to analyze'
+    required: false
+    default: '.ts,.js,.tsx,.jsx,.cs,.java,.kt,.xml,.json,.yaml,.yml'
+  exclude-patterns:
+    description: 'Comma-separated list of glob patterns to exclude'
+    required: false
+    default: 'node_modules/**,dist/**,build/**,*.min.js,*.test.*'
+  find-related-files:
+    description: 'Whether to find and analyze related files'
+    required: false
+    default: 'true'
+  max-files:
+    description: 'Maximum number of files to analyze in a single PR'
+    required: false
+    default: '10'
+  model:
+    description: 'Claude model to use'
+    required: false
+    default: 'claude-3-5-haiku-20241022'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+
+branding:
+  icon: 'code'
+  color: 'purple'

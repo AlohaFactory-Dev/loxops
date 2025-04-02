@@ -1,0 +1,48 @@
+name: Claude AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    # 특정 브랜치만 대상으로 하고 싶다면 아래 주석을 해제하세요
+    # branches:
+    #   - main
+    #   - develop
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  code-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Claude AI 코드 리뷰 액션 실행
+      - name: Run Claude AI Code Review
+        uses: AlohaFactory-Dev/code-review-assistant@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          claude-api-key: ${{ secrets.CLAUDE_API_KEY }}
+
+          # 프로젝트 유형 설정 (auto, unity, springboot, android, nextjs)
+          # auto: 파일 패턴 기반으로 자동 감지
+          project-type: 'auto'
+
+          # 분석할 파일 확장자 (필요에 따라 수정)
+          file-extensions: '.ts,.js,.tsx,.jsx,.cs,.java,.kt,.xml,.json,.yaml,.yml'
+
+          # 제외할 파일 패턴
+          exclude-patterns: 'node_modules/**,dist/**,build/**,*.min.js,*.test.*'
+
+          # 관련 파일 분석 여부
+          find-related-files: 'true'
+
+          # 한 번에 분석할 최대 파일 수
+          max-files: '10'
+
+          # 사용할 Claude 모델
+          model: 'claude-3-5-haiku-20241022'

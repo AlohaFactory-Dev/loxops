@@ -1,0 +1,4 @@
+[tools]
+biome = "latest"
+node = "latest"
+pnpm = "latest"

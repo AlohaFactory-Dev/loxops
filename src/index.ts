@@ -53,8 +53,11 @@ async function run(): Promise<void> {
 		// Generate code review
 		const review = await claudeService.generateReview(context);
 
-		// Post review as a comment on the PR
-		await githubService.createReviewComment(context.pullRequestNumber, review);
+		// Post review as a comment on the PR with line-specific comments
+		await githubService.createReviewWithComments(
+			context.pullRequestNumber,
+			review,
+		);
 
 		core.info("Code review completed successfully");
 	} catch (error) {

@@ -25,6 +25,7 @@ export interface ReviewOptions {
 	maxFiles: number;
 	model: string;
 	useRepomix: boolean;
+	commentStdout?: boolean;
 }
 
 export interface ReviewContext {

@@ -148,12 +148,13 @@ export class GitHubService {
 
 			// Only post regular comment if it's not an error summary
 			if (!isErrorSummary) {
-				// First post the overall review as a regular comment (like before)
+				const reviewBody = `# AI 코드 리뷰\n\n## Overall Assessment\n\n${summary}`;
+
 				await this.octokit.rest.issues.createComment({
 					owner,
 					repo,
 					issue_number: prNumber,
-					body: `# AI 코드 리뷰\n\n${summary}`,
+					body: reviewBody,
 				});
 
 				core.info("Successfully posted overall review comment");

@@ -41200,22 +41200,24 @@ Format both the "summary" and comment "body" fields as markdown text. This allow
 
 IMPORTANT: When including code snippets or special characters in your response, ensure they are properly escaped for JSON. Double quotes must be escaped with a backslash (\\"), newlines with \\n, tabs with \\t, and backslashes themselves with a double backslash (\\\\).
 
+When writing Korean or other non-Latin characters, make sure they are properly encoded in UTF-8. Do not add extra escape sequences for non-Latin characters.
+
 The newlines in markdown should be properly escaped in the JSON as "\\n".
 
 Example format:
 \`\`\`json
 {
-  "summary": "Overall the code is well-structured, but there are a few areas for improvement:\\n\\n- Some function names could be more descriptive\\n- Error handling could be improved\\n- Consider adding more unit tests",
+  "summary": "전반적으로 코드는 잘 구성되어 있지만, 몇 가지 개선할 영역이 있습니다:\\n\\n- 일부 함수명이 더 명확할 수 있음\\n- 오류 처리가 향상될 수 있음\\n- 더 많은 단위 테스트를 고려해보세요",
   "comments": [
     {
       "path": "src/utils/parser.ts",
       "line": 42,
-      "body": "This function name is not descriptive. Consider renaming to describe what it does more clearly.\\n\\nExample:\\n\\n\`\`\`typescript\\n// Instead of\\nfunction process(data) {\\n  // ...\\n}\\n\\n// Consider\\nfunction validateUserInput(data) {\\n  // ...\\n}\\n\`\`\`"
+      "body": "이 함수 이름이 설명적이지 않습니다. 무엇을 하는지 더 명확하게 설명하도록 이름을 변경하는 것을 고려하세요.\\n\\n예시:\\n\\n\`\`\`typescript\\n// 대신\\nfunction process(data) {\\n  // ...\\n}\\n\\n// 다음과 같이 고려\\nfunction validateUserInput(data) {\\n  // ...\\n}\\n\`\`\`"
     },
     {
       "path": "src/models/user.ts",
       "line": 57,
-      "body": "Error handling can be improved here. Consider using a try/catch block and providing more specific error messages."
+      "body": "오류 처리를 개선할 수 있습니다. try/catch 블록을 사용하고 더 구체적인 오류 메시지를 제공하는 것을 고려하세요."
     }
   ]
 }
@@ -41245,41 +41247,17 @@ Please ensure your JSON is valid and properly formatted. Make sure to escape any
                 throw new Error("Could not parse JSON review structure from Claude's response");
             }
             const jsonString = jsonMatch[0].replace(/```json\n|```\n|```/g, "");
-            // Enhanced JSON sanitization to handle all problematic characters
-            let sanitizedJson = "";
+            // Try to parse JSON directly first
             try {
-                // First attempt: Advanced sanitization of JSON string
-                // Handle various control/special characters that could cause issues
-                sanitizedJson = jsonString
-                    // Replace common escape sequence issues
-                    .replace(/\n/g, "\\n")
-                    .replace(/\r/g, "\\r")
-                    .replace(/\t/g, "\\t")
-                    // Remove problematic ASCII control characters (0-31)
-                    .split("")
-                    .filter((char) => char.charCodeAt(0) > 31 ||
-                    char === "\n" ||
-                    char === "\r" ||
-                    char === "\t")
-                    .join("")
-                    // Remove problematic Unicode characters
-                    .split("")
-                    .filter((char) => {
-                    const code = char.charCodeAt(0);
-                    return (code !== 0x2028 &&
-                        code !== 0x2029 &&
-                        code !== 0xfeff &&
-                        code !== 0x85 &&
-                        code !== 0x0b);
-                })
-                    .join("")
+                // Before parsing, only handle necessary escaping (quotes, backslashes)
+                // but don't over-sanitize Korean characters
+                const sanitizedJson = jsonString
                     // Fix double-escaped quotes in code blocks
                     .replace(/\\\\"/g, '\\"')
                     // Clean up any double escape sequences
                     .replace(/\\\\/g, "\\");
-                // Attempt to parse with the sanitized string
                 const review = JSON.parse(sanitizedJson);
-                // Ensure the review has the expected structure
+                // Validate the structure
                 if (!review.summary || !Array.isArray(review.comments)) {
                     throw new Error("Invalid review structure received from Claude");
                 }
@@ -41287,44 +41265,45 @@ Please ensure your JSON is valid and properly formatted. Make sure to escape any
             }
             catch (firstError) {
                 core.warning(`First JSON parsing attempt failed: ${firstError instanceof Error ? firstError.message : String(firstError)}`);
-                // Second attempt: Character-by-character sanitization
                 try {
-                    sanitizedJson = "";
-                    for (let i = 0; i < jsonString.length; i++) {
-                        const char = jsonString[i];
-                        const charCode = jsonString.charCodeAt(i);
-                        // Include only safe characters
-                        // Printable ASCII (32-126) plus safe whitespace characters
-                        if ((charCode >= 32 && charCode <= 126) ||
-                            char === "\n" ||
-                            char === "\r" ||
-                            char === "\t") {
-                            sanitizedJson += char;
-                        }
+                    // Second attempt: Try with JSON5 parsing - more lenient JSON parsing
+                    // This is a simpler approach instead of manually sanitizing characters
+                    // If your project doesn't include json5, you'll need to add it as a dependency
+                    const sanitizedJson = jsonString
+                        .replace(/\n/g, "\\n")
+                        .replace(/\r/g, "\\r")
+                        .replace(/\t/g, "\\t");
+                    // Use a more forgiving JSON parsing approach
+                    // Try with double quotes properly escaped
+                    const reviewText = `{"summary":"${sanitizedJson.match(/"summary"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/)?.[1] || ""}","comments":[]}`;
+                    const review = JSON.parse(reviewText);
+                    // If we got here but there's no content, manually extract comments
+                    if (!review.summary) {
+                        throw new Error("Failed to extract review summary");
                     }
-                    // Try to parse again
-                    const review = JSON.parse(sanitizedJson);
-                    // Validate structure
-                    if (!review.summary || !Array.isArray(review.comments)) {
-                        throw new Error("Invalid review structure after sanitization");
+                    // Extract comments using regex if they exist
+                    const commentMatches = Array.from(jsonString.matchAll(/"path"\s*:\s*"([^"]*)"\s*,\s*"line"\s*:\s*(\d+)\s*,\s*"body"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/g));
+                    if (commentMatches.length > 0) {
+                        review.comments = commentMatches.map((match) => ({
+                            path: match[1],
+                            line: Number.parseInt(match[2], 10),
+                            body: match[3].replace(/\\n/g, "\n").replace(/\\"/g, '"'),
+                        }));
                     }
                     return review;
                 }
                 catch (secondError) {
                     core.warning(`Second JSON parsing attempt failed: ${secondError instanceof Error ? secondError.message : String(secondError)}`);
-                    // Last resort: Try to extract summary and comments manually
+                    // Last resort: Manual extraction
                     try {
-                        // Manual extraction of summary using safer regex approach
                         const summaryRegex = /"summary"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/;
                         const summaryMatch = jsonString.match(summaryRegex);
                         const summary = summaryMatch
                             ? summaryMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"')
                             : "코드 리뷰 요약을 파싱할 수 없습니다.";
-                        // Attempt to extract comments with safer regex approach
                         const comments = [];
                         const commentRegex = /"path"\s*:\s*"([^"]*)"\s*,\s*"line"\s*:\s*(\d+)\s*,\s*"body"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/g;
                         let match = null;
-                        // Use a safer approach without assignment in the condition
                         match = commentRegex.exec(jsonString);
                         while (match !== null) {
                             comments.push({
@@ -41683,12 +41662,12 @@ class GitHubService {
                 summary.includes("알 수 없는 오류로 코드 리뷰를 생성할 수 없습니다");
             // Only post regular comment if it's not an error summary
             if (!isErrorSummary) {
-                // First post the overall review as a regular comment (like before)
+                const reviewBody = `# AI 코드 리뷰\n\n## Overall Assessment\n\n${summary}`;
                 await this.octokit.rest.issues.createComment({
                     owner,
                     repo,
                     issue_number: prNumber,
-                    body: `# AI 코드 리뷰\n\n${summary}`,
+                    body: reviewBody,
                 });
                 core.info("Successfully posted overall review comment");
             }
@@ -42135,6 +42114,12 @@ class BasePromptTemplate {
                 }
             }
         }
+        prompt += `
+중요: 응답할 때 한글 또는 다른 비라틴 문자를 사용하는 경우, 문자 인코딩 문제를 방지하기 위해 다음 지침을 따르세요:
+1. JSON 응답에서 한글을 사용할 때 추가 이스케이프를 하지 마세요 (\\u로 시작하는 유니코드 이스케이프).
+2. 완전히 유효한 UTF-8 인코딩된 문자를 그대로 사용하세요.
+3. 특수 문자나 제어 문자만 이스케이프 처리하고, 한글과 같은 비라틴 문자는 그대로 두세요.
+`;
         return prompt;
     }
 }

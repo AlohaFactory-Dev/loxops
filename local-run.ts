@@ -539,10 +539,12 @@ async function runLocal(): Promise<void> {
 		const maxFiles = Number.parseInt(process.env.MAX_FILES || "10", 10);
 		const model = process.env.MODEL || "claude-3-5-haiku-20241022";
 		const useRepomix = process.env.USE_REPOMIX !== "false";
+		const commentStdout = process.env.COMMENT_STDOUT === "true";
 
 		console.log(`Project Type: ${projectType}`);
 		console.log(`Max Files: ${maxFiles}`);
 		console.log(`Model: ${model}`);
+		console.log(`Print comments to stdout: ${commentStdout}`);
 
 		// Initialize options
 		const options: ReviewOptions = {
@@ -553,6 +555,7 @@ async function runLocal(): Promise<void> {
 			maxFiles,
 			model,
 			useRepomix,
+			commentStdout,
 		};
 
 		// Initialize services with local versions
@@ -587,15 +590,32 @@ async function runLocal(): Promise<void> {
 		console.log("Generating code review...");
 		const review = await claudeService.generateReview(context);
 
-		// Post review as a comment on the PR with line-specific comments
-		console.log("Posting review to PR...");
-		// Use the correct octokit instance for posting comments
-		await githubService.createReviewWithComments(
-			context.pullRequestNumber,
-			review,
-		);
+		// Post review as a comment or print to stdout
+		if (options.commentStdout) {
+			// Print the review to stdout instead of posting to PR
+			console.log("\n\n========== CODE REVIEW ==========\n");
+			console.log(`# AI 코드 리뷰\n\n${review.summary}`);
 
-		console.log("Code review completed successfully");
+			if (review.comments.length > 0) {
+				console.log("\n## 상세 코멘트\n");
+				for (const comment of review.comments) {
+					console.log(`- **${comment.path}:${comment.line}**: ${comment.body}`);
+				}
+			}
+			console.log("\n=================================\n");
+
+			console.log("Code review completed successfully (printed to stdout)");
+		} else {
+			// Post review as a comment on the PR with line-specific comments
+			console.log("Posting review to PR...");
+			// Use the correct octokit instance for posting comments
+			await githubService.createReviewWithComments(
+				context.pullRequestNumber,
+				review,
+			);
+
+			console.log("Code review completed successfully");
+		}
 	} catch (error) {
 		if (error instanceof Error) {
 			console.error(`Error: ${error.message}`);

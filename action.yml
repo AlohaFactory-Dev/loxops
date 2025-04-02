@@ -33,6 +33,10 @@ inputs:
     description: 'Claude model to use'
     required: false
     default: 'claude-3-5-haiku-20241022'
+  use-repomix:
+    description: 'Whether to use Repomix to pack repository for comprehensive review'
+    required: false
+    default: 'true'
 
 runs:
   using: 'node20'

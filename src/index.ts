@@ -15,6 +15,7 @@ async function run(): Promise<void> {
 		const findRelatedFiles = core.getInput("find-related-files") === "true";
 		const maxFiles = Number.parseInt(core.getInput("max-files"), 10);
 		const model = core.getInput("model");
+		const useRepomix = core.getInput("use-repomix") === "true";
 
 		// Initialize options
 		const options: ReviewOptions = {
@@ -24,6 +25,7 @@ async function run(): Promise<void> {
 			findRelatedFiles,
 			maxFiles,
 			model,
+			useRepomix,
 		};
 
 		// Initialize services

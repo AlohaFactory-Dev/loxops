@@ -26,6 +26,7 @@ export function truncate(str: string, maxLength: number): string {
 	if (str.length <= maxLength) {
 		return str;
 	}
+	// This approach might truncate in the middle of a word
 	return `${str.substring(0, maxLength - 3)}...`;
 }
 
@@ -67,4 +68,19 @@ export async function retryWithBackoff<T>(
 			delay *= 2; // Exponential backoff
 		}
 	}
+}
+
+/**
+ * Formats a duration in milliseconds to a human-readable form
+ */
+export function formatDuration(ms: number): string {
+	const seconds = Math.floor(ms / 1000) % 60;
+	const minutes = Math.floor(ms / (1000 * 60)) % 60;
+	const hours = Math.floor(ms / (1000 * 60 * 60));
+
+	return hours > 0
+		? `${hours}h ${minutes}m ${seconds}s`
+		: minutes > 0
+			? `${minutes}m ${seconds}s`
+			: `${seconds}s`;
 }

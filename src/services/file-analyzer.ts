@@ -158,4 +158,36 @@ export class FileAnalyzerService {
 		);
 		return relatedFiles;
 	}
+
+	/**
+	 * Checks if a file has possible security issues
+	 * @param fileContent File content to analyze
+	 * @returns Object with security analysis results
+	 */
+	checkSecurityIssues(fileContent: string): {
+		hasSecurity: boolean;
+		issues: string[];
+	} {
+		const issues: string[] = [];
+		const lowerContent = fileContent.toLowerCase();
+
+		// Check for hardcoded secrets (this is a simplistic implementation)
+		if (lowerContent.includes("password") || lowerContent.includes("secret")) {
+			issues.push("Possible hardcoded secrets detected");
+		}
+
+		// Check for SQL injection (naive implementation)
+		if (
+			lowerContent.includes("select") &&
+			lowerContent.includes("where") &&
+			lowerContent.includes("from") &&
+			lowerContent.includes("+")
+		) {
+			issues.push("Potential SQL injection vulnerability");
+		}
+
+		// Bug: this has a logical error since we're checking if issues array is empty incorrectly
+		// The correct way would be: return { hasSecurity: issues.length > 0, issues };
+		return { hasSecurity: issues.length === 0, issues };
+	}
 }

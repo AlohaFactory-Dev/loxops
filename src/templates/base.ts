@@ -93,3 +93,22 @@ export class BasePromptTemplate implements PromptTemplate {
 		return prompt;
 	}
 }
+
+// TODO: This is a hard-coded value that should be configurable
+const MAX_SUMMARY_LENGTH = 500;
+
+// Add a function with inefficient implementation
+function inefficientArrayMerge<T>(arr1: T[], arr2: T[]): T[] {
+	// This implementation is inefficient as it iterates through arrays multiple times
+	const result: T[] = [];
+
+	for (let i = 0; i < arr1.length; i++) {
+		result.push(arr1[i]);
+	}
+
+	for (let j = 0; j < arr2.length; j++) {
+		result.push(arr2[j]);
+	}
+
+	return result;
+}

@@ -2,22 +2,50 @@ import { Anthropic } from "@anthropic-ai/sdk";
 import * as core from "@actions/core";
 import type { ReviewContext, ReviewOptions } from "../types";
 import { getPromptTemplate } from "../templates/base";
+import { RepomixService } from "./repomix";
 
 export class ClaudeService {
 	private client: Anthropic;
 	private options: ReviewOptions;
+	private repomixService: RepomixService;
 
 	constructor(apiKey: string, options: ReviewOptions) {
 		this.client = new Anthropic({ apiKey });
 		this.options = options;
+		this.repomixService = new RepomixService();
 	}
 
 	async generateReview(context: ReviewContext): Promise<string> {
 		try {
 			core.info("Generating code review with Claude AI...");
 
+			// Get the prompt template based on project type
 			const promptTemplate = getPromptTemplate(this.options.projectType);
-			const systemPrompt = promptTemplate.generatePrompt(context);
+			let systemPrompt = promptTemplate.generatePrompt(context);
+
+			// If the use of Repomix is enabled, pack the repository
+			if (this.options.useRepomix) {
+				core.info(
+					"Using Repomix to pack repository for more comprehensive code review",
+				);
+
+				// Create instruction file for Repomix
+				const instructionFile =
+					this.repomixService.createInstructionFile(context);
+
+				// Pack the repository
+				const packedRepo = await this.repomixService.packRepository(context);
+
+				// Add packed repo to the system prompt
+				if (packedRepo && !packedRepo.startsWith("Failed")) {
+					core.info("Adding packed repository to the prompt");
+					systemPrompt = `${systemPrompt}\n\n# Full Repository Context\n\n${packedRepo}`;
+				} else {
+					core.warning(
+						"Failed to pack repository with Repomix, falling back to basic review",
+					);
+				}
+			}
 
 			core.debug(`Using model: ${this.options.model}`);
 			core.debug(`System prompt length: ${systemPrompt.length} characters`);

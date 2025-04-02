@@ -41070,6 +41070,7 @@ async function run() {
         const findRelatedFiles = core.getInput("find-related-files") === "true";
         const maxFiles = Number.parseInt(core.getInput("max-files"), 10);
         const model = core.getInput("model");
+        const useRepomix = core.getInput("use-repomix") === "true";
         // Initialize options
         const options = {
             projectType,
@@ -41078,6 +41079,7 @@ async function run() {
             findRelatedFiles,
             maxFiles,
             model,
+            useRepomix,
         };
         // Initialize services
         const fileAnalyzerService = new file_analyzer_1.FileAnalyzerService(githubToken, options);
@@ -41158,18 +41160,38 @@ exports.ClaudeService = void 0;
 const sdk_1 = __nccwpck_require__(4167);
 const core = __importStar(__nccwpck_require__(9999));
 const base_1 = __nccwpck_require__(2136);
+const repomix_1 = __nccwpck_require__(4768);
 class ClaudeService {
     client;
     options;
+    repomixService;
     constructor(apiKey, options) {
         this.client = new sdk_1.Anthropic({ apiKey });
         this.options = options;
+        this.repomixService = new repomix_1.RepomixService();
     }
     async generateReview(context) {
         try {
             core.info("Generating code review with Claude AI...");
+            // Get the prompt template based on project type
             const promptTemplate = (0, base_1.getPromptTemplate)(this.options.projectType);
-            const systemPrompt = promptTemplate.generatePrompt(context);
+            let systemPrompt = promptTemplate.generatePrompt(context);
+            // If the use of Repomix is enabled, pack the repository
+            if (this.options.useRepomix) {
+                core.info("Using Repomix to pack repository for more comprehensive code review");
+                // Create instruction file for Repomix
+                const instructionFile = this.repomixService.createInstructionFile(context);
+                // Pack the repository
+                const packedRepo = await this.repomixService.packRepository(context);
+                // Add packed repo to the system prompt
+                if (packedRepo && !packedRepo.startsWith("Failed")) {
+                    core.info("Adding packed repository to the prompt");
+                    systemPrompt = `${systemPrompt}\n\n# Full Repository Context\n\n${packedRepo}`;
+                }
+                else {
+                    core.warning("Failed to pack repository with Repomix, falling back to basic review");
+                }
+            }
             core.debug(`Using model: ${this.options.model}`);
             core.debug(`System prompt length: ${systemPrompt.length} characters`);
             const message = await this.client.messages.create({
@@ -41537,6 +41559,161 @@ class GitHubService {
     }
 }
 exports.GitHubService = GitHubService;
+
+
+/***/ }),
+
+/***/ 4768:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.RepomixService = void 0;
+const core = __importStar(__nccwpck_require__(9999));
+const path = __importStar(__nccwpck_require__(6760));
+const fs = __importStar(__nccwpck_require__(3024));
+const node_child_process_1 = __nccwpck_require__(1421);
+const node_util_1 = __nccwpck_require__(7975);
+const execAsync = (0, node_util_1.promisify)(node_child_process_1.exec);
+class RepomixService {
+    /**
+     * Packs the repository using Repomix and returns the content
+     * to be used by Claude for a more comprehensive code review
+     */
+    async packRepository(context) {
+        try {
+            core.info("Packing repository with Repomix...");
+            // Create a temp directory for the output
+            const tempDir = path.join(process.cwd(), ".repomix-temp");
+            if (!fs.existsSync(tempDir)) {
+                fs.mkdirSync(tempDir);
+            }
+            // Output file path
+            const outputFilePath = path.join(tempDir, "repo-pack.md");
+            // Create a basic config file for Repomix
+            const configFilePath = path.join(tempDir, "repomix.config.json");
+            const config = {
+                output: {
+                    path: outputFilePath,
+                    includeRepositoryStructure: true,
+                    removeComments: false,
+                    instructionFilePath: null,
+                },
+                ignore: {
+                    useGitignore: true,
+                    useDefaultPatterns: true,
+                    customPatterns: context.files
+                        .filter((f) => f.status === "removed")
+                        .map((f) => f.filename),
+                },
+                security: {
+                    enableSecurityCheck: true,
+                },
+            };
+            fs.writeFileSync(configFilePath, JSON.stringify(config, null, 2));
+            // Run Repomix CLI command
+            core.info("Running Repomix...");
+            const { stdout, stderr } = await execAsync(`npx repomix --config ${configFilePath}`);
+            if (stderr) {
+                core.warning(`Repomix warnings: ${stderr}`);
+            }
+            core.info(`Repomix output: ${stdout}`);
+            // Read the packed file
+            if (!fs.existsSync(outputFilePath)) {
+                throw new Error("Repomix did not generate the output file");
+            }
+            const packedContent = fs.readFileSync(outputFilePath, "utf8");
+            // Clean up
+            try {
+                fs.unlinkSync(outputFilePath);
+                fs.unlinkSync(configFilePath);
+                fs.rmdirSync(tempDir);
+            }
+            catch (cleanupError) {
+                core.warning(`Failed to clean up temporary files: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+            }
+            core.info(`Repository packed successfully - ${(packedContent.length / 1024).toFixed(2)} KB`);
+            return packedContent;
+        }
+        catch (error) {
+            core.error(`Failed to pack repository: ${error instanceof Error ? error.message : String(error)}`);
+            return "Failed to pack repository with Repomix";
+        }
+    }
+    /**
+     * Creates a custom instruction file for Repomix
+     * based on the PR context and the review requirements
+     */
+    createInstructionFile(context) {
+        const tempDir = path.join(process.cwd(), ".repomix-temp");
+        if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir);
+        }
+        const instructionPath = path.join(tempDir, "review-instructions.md");
+        // Create detailed instructions for Claude
+        const instructions = `# Code Review Instructions
+
+## Pull Request Information
+- **PR Title:** ${context.pullRequestTitle}
+- **PR Number:** ${context.pullRequestNumber}
+- **Repository:** ${context.repositoryOwner}/${context.repositoryName}
+- **Branch:** ${context.branch}
+- **Base:** ${context.baseRef}
+
+## Changed Files
+Please focus your review on these files that were changed in the PR:
+${context.files.map((file) => `- \`${file.filename}\` (${file.status})`).join("\n")}
+
+## Review Guidelines
+1. Identify bugs, security issues, and potential problems
+2. Suggest code improvements for readability and maintainability
+3. Check for performance issues
+4. Ensure proper error handling
+5. Verify code follows project patterns and conventions
+6. Provide specific, actionable feedback with code examples
+
+## Repository Context
+The code above contains the full repository context to help you understand the codebase better.
+`;
+        fs.writeFileSync(instructionPath, instructions);
+        return instructionPath;
+    }
+}
+exports.RepomixService = RepomixService;
 
 
 /***/ }),
@@ -41958,6 +42135,14 @@ module.exports = require("https");
 
 "use strict";
 module.exports = require("net");
+
+/***/ }),
+
+/***/ 1421:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:child_process");
 
 /***/ }),
 

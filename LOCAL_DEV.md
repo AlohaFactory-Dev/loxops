@@ -13,8 +13,8 @@ This guide explains how to run the Code Review Assistant locally for development
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-username/code-review-assistant.git
-   cd code-review-assistant
+   git clone https://github.com/AlohaFactory-Dev/loxops.git
+   cd loxops
    ```
 
 2. Install dependencies:

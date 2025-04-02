@@ -48,7 +48,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run Code Review Assistant
-        uses: AlohaFactory-Dev/code-review-assistant@v1
+        uses: AlohaFactory-Dev/loxops@v1.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           claude-api-key: ${{ secrets.CLAUDE_API_KEY }}

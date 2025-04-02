@@ -14,8 +14,8 @@ This repository contains a script to run the Code Review Assistant locally, allo
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/your-username/code-review-assistant.git
-   cd code-review-assistant
+   git clone https://github.com/AlohaFactory-Dev/loxops.git
+   cd loxops
    ```
 
 2. Run the setup script:

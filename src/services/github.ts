@@ -145,15 +145,37 @@ export class GitHubService {
 		const { summary, comments } = review;
 
 		try {
-			// First post the overall review as a regular comment (like before)
-			await this.octokit.rest.issues.createComment({
-				owner,
-				repo,
-				issue_number: prNumber,
-				body: `# AI 코드 리뷰\n\n${summary}`,
-			});
+			// Check if the summary is from an error in Claude service
+			const isErrorSummary =
+				summary.includes("코드 리뷰 응답 파싱에 실패했습니다") ||
+				summary.includes("Claude 코드 리뷰 생성 중 오류가 발생했습니다") ||
+				summary.includes("알 수 없는 오류로 코드 리뷰를 생성할 수 없습니다");
 
-			core.info("Successfully posted overall review comment");
+			// Only post regular comment if it's not an error summary
+			if (!isErrorSummary) {
+				// First post the overall review as a regular comment (like before)
+				await this.octokit.rest.issues.createComment({
+					owner,
+					repo,
+					issue_number: prNumber,
+					body: `# AI 코드 리뷰\n\n${summary}`,
+				});
+
+				core.info("Successfully posted overall review comment");
+			} else {
+				core.info(
+					"Skipping posting summary comment as it contains an error message",
+				);
+				return; // Exit early if there's an error summary
+			}
+
+			// Only continue with line comments if there are actual comments
+			if (comments.length === 0) {
+				core.info(
+					"No line-specific comments to post, skipping review creation",
+				);
+				return;
+			}
 
 			// Get the latest commit SHA for the pull request
 			const prResponse = await this.octokit.rest.pulls.get({
@@ -189,7 +211,8 @@ export class GitHubService {
 			if (error instanceof Error) {
 				core.error(`Error posting review: ${error.message}`);
 
-				// Fallback to posting a regular comment if review creation fails
+				// Only fall back to a regular comment if we have real content to show
+				// and it's not an error message from Claude
 				try {
 					core.info("Falling back to posting a regular comment");
 					await this.createReviewComment(

@@ -1,5 +1,6 @@
 {
   "name": "code-review-assistant",
+  "homepage": "https://github.com/AlohaFactory-Dev/code-review-assistant",
   "version": "1.0.0",
   "description": "GitHub Action for automated code reviews using Claude AI",
   "main": "dist/index.js",

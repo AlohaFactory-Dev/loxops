@@ -42,3 +42,14 @@ export interface ReviewContext {
 export interface PromptTemplate {
 	generatePrompt: (context: ReviewContext) => string;
 }
+
+export interface ReviewComment {
+	path: string;
+	line: number;
+	body: string;
+}
+
+export interface StructuredReview {
+	summary: string;
+	comments: ReviewComment[];
+}

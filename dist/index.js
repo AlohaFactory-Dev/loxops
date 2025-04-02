@@ -41099,8 +41099,8 @@ async function run() {
         }
         // Generate code review
         const review = await claudeService.generateReview(context);
-        // Post review as a comment on the PR
-        await githubService.createReviewComment(context.pullRequestNumber, review);
+        // Post review as a comment on the PR with line-specific comments
+        await githubService.createReviewWithComments(context.pullRequestNumber, review);
         core.info("Code review completed successfully");
     }
     catch (error) {
@@ -41192,6 +41192,30 @@ class ClaudeService {
                     core.warning("Failed to pack repository with Repomix, falling back to basic review");
                 }
             }
+            systemPrompt += `\n\n# Response Format
+Please provide your review in a structured JSON format that includes:
+1. A summary section with overall feedback
+2. Line-specific comments for each file
+
+Example format:
+\`\`\`json
+{
+  "summary": "Overall review summary goes here...",
+  "comments": [
+    {
+      "path": "src/example.ts",
+      "line": 42,
+      "body": "Consider using a more descriptive variable name here."
+    },
+    {
+      "path": "src/another-file.js",
+      "line": 15,
+      "body": "This function could be simplified using destructuring."
+    }
+  ]
+}
+\`\`\`
+`;
             core.debug(`Using model: ${this.options.model}`);
             core.debug(`System prompt length: ${systemPrompt.length} characters`);
             const message = await this.client.messages.create({
@@ -41201,19 +41225,39 @@ class ClaudeService {
                 messages: [
                     {
                         role: "user",
-                        content: "제공된 모든 변경사항을 검토하고 포괄적이면서도 간결한 코드 리뷰를 제공해주세요. 중요한 이슈에 집중하고, 구체적인 개선 제안을 코드 예시와 함께 제공해주세요. 변경된 파일과 관련 파일들 간의 잠재적 영향도 분석해주세요.",
+                        content: "제공된 모든 변경사항을 검토하고 포괄적이면서도 간결한 코드 리뷰를 제공해주세요. 중요한 이슈에 집중하고, 구체적인 개선 제안을 코드 예시와 함께 제공해주세요. 변경된 파일과 관련 파일들 간의 잠재적 영향도 분석해주세요. JSON 형식으로 응답해주세요.",
                     },
                 ],
             });
-            return message.content[0].text;
+            const responseText = message.content[0].text;
+            // Extract JSON from the response
+            const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/) ||
+                responseText.match(/```\n([\s\S]*?)\n```/) ||
+                responseText.match(/{[\s\S]*}/);
+            if (!jsonMatch) {
+                throw new Error("Could not parse JSON review structure from Claude's response");
+            }
+            const jsonString = jsonMatch[0].replace(/```json\n|```\n|```/g, "");
+            const review = JSON.parse(jsonString);
+            // Ensure the review has the expected structure
+            if (!review.summary || !Array.isArray(review.comments)) {
+                throw new Error("Invalid review structure received from Claude");
+            }
+            return review;
         }
         catch (error) {
             if (error instanceof Error) {
                 core.error(`Claude API 호출 중 오류 발생: ${error.message}`);
-                return `Claude 코드 리뷰 생성 중 오류가 발생했습니다: ${error.message}`;
+                return {
+                    summary: `Claude 코드 리뷰 생성 중 오류가 발생했습니다: ${error.message}`,
+                    comments: [],
+                };
             }
             core.error("Claude API 호출 중 알 수 없는 오류가 발생했습니다");
-            return "알 수 없는 오류로 코드 리뷰를 생성할 수 없습니다";
+            return {
+                summary: "알 수 없는 오류로 코드 리뷰를 생성할 수 없습니다",
+                comments: [],
+            };
         }
     }
 }
@@ -41523,6 +41567,62 @@ class GitHubService {
             }
             else {
                 core.error("Unknown error posting review comment");
+            }
+        }
+    }
+    async createReviewWithComments(prNumber, review) {
+        const { owner, repo } = this.context.repo;
+        const { summary, comments } = review;
+        try {
+            // First post the overall review as a regular comment (like before)
+            await this.octokit.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: prNumber,
+                body: `# AI 코드 리뷰\n\n${summary}`,
+            });
+            core.info("Successfully posted overall review comment");
+            // Get the latest commit SHA for the pull request
+            const prResponse = await this.octokit.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: prNumber,
+            });
+            const headSha = prResponse.data.head.sha;
+            // Format review comments in the GitHub expected format
+            const reviewComments = comments.map((comment) => ({
+                path: comment.path,
+                line: comment.line,
+                body: comment.body,
+                position: undefined, // Use line instead of position for accurate line location
+                side: "RIGHT", // Comment on the right side (new code)
+            }));
+            // Create the review with line-specific comments
+            await this.octokit.rest.pulls.createReview({
+                owner,
+                repo,
+                pull_number: prNumber,
+                commit_id: headSha,
+                body: "# AI 코드 리뷰 - 라인별 코멘트", // Just a title for the review itself
+                event: "COMMENT", // Use 'APPROVE' or 'REQUEST_CHANGES' if appropriate
+                comments: reviewComments,
+            });
+            core.info("Successfully posted code review with line-specific comments");
+        }
+        catch (error) {
+            if (error instanceof Error) {
+                core.error(`Error posting review: ${error.message}`);
+                // Fallback to posting a regular comment if review creation fails
+                try {
+                    core.info("Falling back to posting a regular comment");
+                    await this.createReviewComment(prNumber, `${summary}\n\n## 상세 코멘트\n\n${comments.map((c) => `- **${c.path}:${c.line}**: ${c.body}`).join("\n\n")}`);
+                }
+                catch (fallbackError) {
+                    core.error("Fallback comment also failed");
+                }
+            }
+            else {
+                core.error("Unknown error posting review");
             }
         }
     }

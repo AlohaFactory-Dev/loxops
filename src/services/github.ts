@@ -1,6 +1,11 @@
 import * as github from "@actions/github";
 import * as core from "@actions/core";
-import type { FileChange, ReviewContext } from "../types";
+import type {
+	FileChange,
+	ReviewComment,
+	ReviewContext,
+	StructuredReview,
+} from "../types";
 import type { FileAnalyzerService } from "./file-analyzer";
 
 export class GitHubService {
@@ -128,6 +133,74 @@ export class GitHubService {
 				core.error(`Error posting review comment: ${error.message}`);
 			} else {
 				core.error("Unknown error posting review comment");
+			}
+		}
+	}
+
+	async createReviewWithComments(
+		prNumber: number,
+		review: StructuredReview,
+	): Promise<void> {
+		const { owner, repo } = this.context.repo;
+		const { summary, comments } = review;
+
+		try {
+			// First post the overall review as a regular comment (like before)
+			await this.octokit.rest.issues.createComment({
+				owner,
+				repo,
+				issue_number: prNumber,
+				body: `# AI 코드 리뷰\n\n${summary}`,
+			});
+
+			core.info("Successfully posted overall review comment");
+
+			// Get the latest commit SHA for the pull request
+			const prResponse = await this.octokit.rest.pulls.get({
+				owner,
+				repo,
+				pull_number: prNumber,
+			});
+
+			const headSha = prResponse.data.head.sha;
+
+			// Format review comments in the GitHub expected format
+			const reviewComments = comments.map((comment) => ({
+				path: comment.path,
+				line: comment.line,
+				body: comment.body,
+				position: undefined, // Use line instead of position for accurate line location
+				side: "RIGHT", // Comment on the right side (new code)
+			}));
+
+			// Create the review with line-specific comments
+			await this.octokit.rest.pulls.createReview({
+				owner,
+				repo,
+				pull_number: prNumber,
+				commit_id: headSha,
+				body: "# AI 코드 리뷰 - 라인별 코멘트", // Just a title for the review itself
+				event: "COMMENT", // Use 'APPROVE' or 'REQUEST_CHANGES' if appropriate
+				comments: reviewComments,
+			});
+
+			core.info("Successfully posted code review with line-specific comments");
+		} catch (error) {
+			if (error instanceof Error) {
+				core.error(`Error posting review: ${error.message}`);
+
+				// Fallback to posting a regular comment if review creation fails
+				try {
+					core.info("Falling back to posting a regular comment");
+					await this.createReviewComment(
+						prNumber,
+						`${summary}\n\n## 상세 코멘트\n\n${comments.map((c) => `- **${c.path}:${c.line}**: ${c.body}`).join("\n\n")}`,
+					);
+				} catch (fallbackError) {
+					core.error("Fallback comment also failed");
+				}
+			} else {
+				core.error("Unknown error posting review");
 			}
 		}
 	}

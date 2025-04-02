@@ -1,4 +1,4 @@
-name: Claude AI Code Review
+name: Code Review Assistant
 
 on:
   pull_request:

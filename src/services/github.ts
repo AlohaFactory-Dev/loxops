@@ -1,11 +1,6 @@
 import * as github from "@actions/github";
 import * as core from "@actions/core";
-import type {
-	FileChange,
-	ReviewComment,
-	ReviewContext,
-	StructuredReview,
-} from "../types";
+import type { FileChange, ReviewContext, StructuredReview } from "../types";
 import type { FileAnalyzerService } from "./file-analyzer";
 
 export class GitHubService {
@@ -187,26 +182,62 @@ export class GitHubService {
 			const headSha = prResponse.data.head.sha;
 
 			// Format review comments in the GitHub expected format
-			const reviewComments = comments.map((comment) => ({
-				path: comment.path,
-				line: comment.line,
-				body: comment.body,
-				position: undefined, // Use line instead of position for accurate line location
-				side: "RIGHT", // Comment on the right side (new code)
-			}));
+			// Filter out invalid comments and ensure required fields are present
+			const reviewComments = comments
+				.filter((comment) => comment.body && comment.line > 0 && comment.path)
+				.map((comment) => ({
+					path: comment.path,
+					line: comment.line, // Use line for the diff line number
+					body: comment.body || "No comment provided", // Ensure body is never null
+				}));
 
-			// Create the review with line-specific comments
-			await this.octokit.rest.pulls.createReview({
-				owner,
-				repo,
-				pull_number: prNumber,
-				commit_id: headSha,
-				body: "# AI 코드 리뷰 - 라인별 코멘트", // Just a title for the review itself
-				event: "COMMENT", // Use 'APPROVE' or 'REQUEST_CHANGES' if appropriate
-				comments: reviewComments,
-			});
+			// Only create review if we have valid comments
+			if (reviewComments.length > 0) {
+				try {
+					// Create the review with line-specific comments
+					await this.octokit.rest.pulls.createReview({
+						owner,
+						repo,
+						pull_number: prNumber,
+						commit_id: headSha,
+						body: "# AI 코드 리뷰 - 라인별 코멘트",
+						event: "COMMENT",
+						comments: reviewComments,
+					});
 
-			core.info("Successfully posted code review with line-specific comments");
+					core.info(
+						"Successfully posted code review with line-specific comments",
+					);
+				} catch (reviewError) {
+					core.error(
+						`Error creating review with comments: ${reviewError instanceof Error ? reviewError.message : String(reviewError)}`,
+					);
+
+					// Fallback to individual comments
+					core.info("Falling back to individual comments");
+					for (const comment of reviewComments) {
+						try {
+							await this.octokit.rest.pulls.createReviewComment({
+								owner,
+								repo,
+								pull_number: prNumber,
+								commit_id: headSha,
+								path: comment.path,
+								body: comment.body,
+								line: comment.line,
+							});
+						} catch (commentError) {
+							core.error(
+								`Error posting comment on ${comment.path}:${comment.line}: ${commentError instanceof Error ? commentError.message : String(commentError)}`,
+							);
+						}
+					}
+				}
+			} else {
+				core.info(
+					"No valid line-specific comments to post, skipping review creation",
+				);
+			}
 		} catch (error) {
 			if (error instanceof Error) {
 				core.error(`Error posting review: ${error.message}`);

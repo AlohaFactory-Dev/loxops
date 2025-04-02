@@ -28,15 +28,11 @@ export class RepomixService {
 			// Create a basic config file for Repomix
 			const configFilePath = path.join(tempDir, "repomix.config.json");
 
-			// Create instruction file
-			const instructionFilePath = this.createInstructionFile(context);
-
 			const config = {
 				output: {
 					path: outputFilePath,
 					includeRepositoryStructure: true,
 					removeComments: false,
-					instructionFilePath: instructionFilePath,
 				},
 				ignore: {
 					useGitignore: true,
@@ -92,47 +88,5 @@ export class RepomixService {
 			);
 			return "Failed to pack repository with Repomix";
 		}
-	}
-
-	/**
-	 * Creates a custom instruction file for Repomix
-	 * based on the PR context and the review requirements
-	 */
-	createInstructionFile(context: ReviewContext): string {
-		const tempDir = path.join(process.cwd(), ".repomix-temp");
-		if (!fs.existsSync(tempDir)) {
-			fs.mkdirSync(tempDir);
-		}
-
-		const instructionPath = path.join(tempDir, "review-instructions.md");
-
-		// Create detailed instructions for Claude
-		const instructions = `# Code Review Instructions
-
-## Pull Request Information
-- **PR Title:** ${context.pullRequestTitle}
-- **PR Number:** ${context.pullRequestNumber}
-- **Repository:** ${context.repositoryOwner}/${context.repositoryName}
-- **Branch:** ${context.branch}
-- **Base:** ${context.baseRef}
-
-## Changed Files
-Please focus your review on these files that were changed in the PR:
-${context.files.map((file) => `- \`${file.filename}\` (${file.status})`).join("\n")}
-
-## Review Guidelines
-1. Identify bugs, security issues, and potential problems
-2. Suggest code improvements for readability and maintainability
-3. Check for performance issues
-4. Ensure proper error handling
-5. Verify code follows project patterns and conventions
-6. Provide specific, actionable feedback with code examples
-
-## Repository Context
-The code above contains the full repository context to help you understand the codebase better.
-`;
-
-		fs.writeFileSync(instructionPath, instructions);
-		return instructionPath;
 	}
 }

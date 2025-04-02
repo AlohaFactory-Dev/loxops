@@ -23,7 +23,7 @@ jobs:
 
       # Claude AI 코드 리뷰 액션 실행
       - name: Run Code Review Assistant
-        uses: AlohaFactory-Dev/code-review-assistant@c1ac4192016810d5f324fe276b4652aab0aafd58
+        uses: AlohaFactory-Dev/code-review-assistant@38237f379acb32af896765fd428a6057427fdd20
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           claude-api-key: ${{ secrets.CLAUDE_API_KEY }}

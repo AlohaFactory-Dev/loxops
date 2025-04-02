@@ -52,24 +52,31 @@ Please provide your review in a structured JSON format that includes:
 1. A summary section with overall feedback
 2. Line-specific comments for each file
 
+Your ENTIRE response must be valid JSON enclosed in a markdown code block. Do not include any text, explanations, or comments outside the JSON code block.
+
+Format both the "summary" and comment "body" fields as markdown text. This allows you to include:
+- Code blocks with syntax highlighting
+- Bullet points and numbered lists
+- Bold/italic text for emphasis
+- Links to documentation when relevant
+
+The newlines in markdown should be properly escaped in the JSON as "\\n".
+
 Example format:
 \`\`\`json
 {
-  "summary": "Overall review summary goes here...",
+  "summary": "## Overall Review\\n\\nThis is a markdown formatted summary with **bold text** and a list:\\n- Item 1\\n- Item 2",
   "comments": [
     {
       "path": "src/example.ts",
       "line": 42,
-      "body": "Consider using a more descriptive variable name here."
-    },
-    {
-      "path": "src/another-file.js",
-      "line": 15,
-      "body": "This function could be simplified using destructuring."
+      "body": "Consider using a more descriptive name. Example:\\n\\n\`\`\`typescript\\nconst userId = data.id;\\n\`\`\`"
     }
   ]
 }
 \`\`\`
+
+IMPORTANT: Ensure that the JSON is valid and properly escaped, especially for quotes, control characters, and special characters in strings. All markdown must be properly escaped within the JSON strings.
 `;
 
 			core.debug(`Using model: ${this.options.model}`);
@@ -103,14 +110,46 @@ Example format:
 			}
 
 			const jsonString = jsonMatch[0].replace(/```json\n|```\n|```/g, "");
-			const review = JSON.parse(jsonString);
 
-			// Ensure the review has the expected structure
-			if (!review.summary || !Array.isArray(review.comments)) {
-				throw new Error("Invalid review structure received from Claude");
+			// Sanitize JSON string by manually removing control characters
+			let sanitizedJson = "";
+			for (let i = 0; i < jsonString.length; i++) {
+				const charCode = jsonString.charCodeAt(i);
+				// Skip control characters
+				if (
+					(charCode >= 0x20 && charCode !== 0x7f) ||
+					charCode === 0x09 ||
+					charCode === 0x0a ||
+					charCode === 0x0d
+				) {
+					sanitizedJson += jsonString[i];
+				}
 			}
 
-			return review as StructuredReview;
+			try {
+				const review = JSON.parse(sanitizedJson);
+
+				// Ensure the review has the expected structure
+				if (!review.summary || !Array.isArray(review.comments)) {
+					throw new Error("Invalid review structure received from Claude");
+				}
+
+				return review as StructuredReview;
+			} catch (jsonError) {
+				core.error(
+					`JSON parsing error: ${jsonError instanceof Error ? jsonError.message : String(jsonError)}`,
+				);
+				core.debug(
+					`Failed to parse JSON: ${sanitizedJson.substring(0, 500)}...`,
+				);
+
+				// Fallback to a simpler structure
+				return {
+					summary:
+						"코드 리뷰 응답 파싱에 실패했습니다. JSON 형식이 올바르지 않습니다.",
+					comments: [],
+				};
+			}
 		} catch (error) {
 			if (error instanceof Error) {
 				core.error(`Claude API 호출 중 오류 발생: ${error.message}`);

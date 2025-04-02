@@ -27,12 +27,16 @@ export class RepomixService {
 
 			// Create a basic config file for Repomix
 			const configFilePath = path.join(tempDir, "repomix.config.json");
+
+			// Create instruction file
+			const instructionFilePath = this.createInstructionFile(context);
+
 			const config = {
 				output: {
 					path: outputFilePath,
 					includeRepositoryStructure: true,
 					removeComments: false,
-					instructionFilePath: null,
+					instructionFilePath: instructionFilePath,
 				},
 				ignore: {
 					useGitignore: true,

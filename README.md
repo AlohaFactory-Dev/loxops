@@ -62,7 +62,7 @@ jobs:
 
 - `project-type`: 프로젝트 유형 ('unity', 'springboot', 'android', 'nextjs', 'auto')
 - `file-extensions`: 분석할 파일 확장자
-- `exclude-patterns`: 제외할 파일 패턴
+- `exclude-patterns`: 제외할 파일 패턴 (예: `*.log`, `*.txt`)
 - `find-related-files`: 관련 파일 분석 여부
 - `max-files`: 한 번에 분석할 최대 파일 수
 - `model`: 사용할 Claude 모델

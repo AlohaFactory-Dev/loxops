@@ -41087,11 +41087,6 @@ async function run() {
         const claudeService = new claude_1.ClaudeService(claudeApiKey, options);
         // Prepare review context
         const context = await githubService.prepareReviewContext(maxFiles);
-        // Auto-detect project type if set to 'auto'
-        if (options.projectType === "auto") {
-            options.projectType = fileAnalyzerService.detectProjectType(context.files);
-            core.info(`Auto-detected project type: ${options.projectType}`);
-        }
         // Find related files if enabled
         if (options.findRelatedFiles) {
             context.relatedFiles =
@@ -41179,8 +41174,6 @@ class ClaudeService {
             // If the use of Repomix is enabled, pack the repository
             if (this.options.useRepomix) {
                 core.info("Using Repomix to pack repository for more comprehensive code review");
-                // Create instruction file for Repomix
-                const instructionFile = this.repomixService.createInstructionFile(context);
                 // Pack the repository
                 const packedRepo = await this.repomixService.packRepository(context);
                 // Add packed repo to the system prompt
@@ -41197,25 +41190,38 @@ Please provide your review in a structured JSON format that includes:
 1. A summary section with overall feedback
 2. Line-specific comments for each file
 
+Your ENTIRE response must be valid JSON enclosed in a markdown code block. Do not include any text, explanations, or comments outside the JSON code block.
+
+Format both the "summary" and comment "body" fields as markdown text. This allows you to include:
+- Code blocks with syntax highlighting
+- Bullet points and numbered lists
+- Bold/italic text for emphasis
+- Links to documentation when relevant
+
+IMPORTANT: When including code snippets or special characters in your response, ensure they are properly escaped for JSON. Double quotes must be escaped with a backslash (\\"), newlines with \\n, tabs with \\t, and backslashes themselves with a double backslash (\\\\).
+
+The newlines in markdown should be properly escaped in the JSON as "\\n".
+
 Example format:
 \`\`\`json
 {
-  "summary": "Overall review summary goes here...",
+  "summary": "Overall the code is well-structured, but there are a few areas for improvement:\\n\\n- Some function names could be more descriptive\\n- Error handling could be improved\\n- Consider adding more unit tests",
   "comments": [
     {
-      "path": "src/example.ts",
+      "path": "src/utils/parser.ts",
       "line": 42,
-      "body": "Consider using a more descriptive variable name here."
+      "body": "This function name is not descriptive. Consider renaming to describe what it does more clearly.\\n\\nExample:\\n\\n\`\`\`typescript\\n// Instead of\\nfunction process(data) {\\n  // ...\\n}\\n\\n// Consider\\nfunction validateUserInput(data) {\\n  // ...\\n}\\n\`\`\`"
     },
     {
-      "path": "src/another-file.js",
-      "line": 15,
-      "body": "This function could be simplified using destructuring."
+      "path": "src/models/user.ts",
+      "line": 57,
+      "body": "Error handling can be improved here. Consider using a try/catch block and providing more specific error messages."
     }
   ]
 }
 \`\`\`
-`;
+
+Please ensure your JSON is valid and properly formatted. Make sure to escape any special characters in the JSON to prevent parsing errors.`;
             core.debug(`Using model: ${this.options.model}`);
             core.debug(`System prompt length: ${systemPrompt.length} characters`);
             const message = await this.client.messages.create({
@@ -41225,11 +41231,12 @@ Example format:
                 messages: [
                     {
                         role: "user",
-                        content: "제공된 모든 변경사항을 검토하고 포괄적이면서도 간결한 코드 리뷰를 제공해주세요. 중요한 이슈에 집중하고, 구체적인 개선 제안을 코드 예시와 함께 제공해주세요. 변경된 파일과 관련 파일들 간의 잠재적 영향도 분석해주세요. JSON 형식으로 응답해주세요.",
+                        content: "제공된 모든 변경사항을 검토하고 포괄적이면서도 간결한 코드 리뷰를 제공해주세요. 중요한 이슈에 집중하고, 구체적인 개선 제안을 코드 예시와 함께 제공해주세요. 변경된 파일과 관련 파일들 간의 잠재적 영향도 분석해주세요.",
                     },
                 ],
             });
             const responseText = message.content[0].text;
+            core.debug(`Claude response: ${responseText}`);
             // Extract JSON from the response
             const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/) ||
                 responseText.match(/```\n([\s\S]*?)\n```/) ||
@@ -41238,12 +41245,108 @@ Example format:
                 throw new Error("Could not parse JSON review structure from Claude's response");
             }
             const jsonString = jsonMatch[0].replace(/```json\n|```\n|```/g, "");
-            const review = JSON.parse(jsonString);
-            // Ensure the review has the expected structure
-            if (!review.summary || !Array.isArray(review.comments)) {
-                throw new Error("Invalid review structure received from Claude");
+            // Enhanced JSON sanitization to handle all problematic characters
+            let sanitizedJson = "";
+            try {
+                // First attempt: Advanced sanitization of JSON string
+                // Handle various control/special characters that could cause issues
+                sanitizedJson = jsonString
+                    // Replace common escape sequence issues
+                    .replace(/\n/g, "\\n")
+                    .replace(/\r/g, "\\r")
+                    .replace(/\t/g, "\\t")
+                    // Remove problematic ASCII control characters (0-31)
+                    .split("")
+                    .filter((char) => char.charCodeAt(0) > 31 ||
+                    char === "\n" ||
+                    char === "\r" ||
+                    char === "\t")
+                    .join("")
+                    // Remove problematic Unicode characters
+                    .split("")
+                    .filter((char) => {
+                    const code = char.charCodeAt(0);
+                    return (code !== 0x2028 &&
+                        code !== 0x2029 &&
+                        code !== 0xfeff &&
+                        code !== 0x85 &&
+                        code !== 0x0b);
+                })
+                    .join("")
+                    // Fix double-escaped quotes in code blocks
+                    .replace(/\\\\"/g, '\\"')
+                    // Clean up any double escape sequences
+                    .replace(/\\\\/g, "\\");
+                // Attempt to parse with the sanitized string
+                const review = JSON.parse(sanitizedJson);
+                // Ensure the review has the expected structure
+                if (!review.summary || !Array.isArray(review.comments)) {
+                    throw new Error("Invalid review structure received from Claude");
+                }
+                return review;
             }
-            return review;
+            catch (firstError) {
+                core.warning(`First JSON parsing attempt failed: ${firstError instanceof Error ? firstError.message : String(firstError)}`);
+                // Second attempt: Character-by-character sanitization
+                try {
+                    sanitizedJson = "";
+                    for (let i = 0; i < jsonString.length; i++) {
+                        const char = jsonString[i];
+                        const charCode = jsonString.charCodeAt(i);
+                        // Include only safe characters
+                        // Printable ASCII (32-126) plus safe whitespace characters
+                        if ((charCode >= 32 && charCode <= 126) ||
+                            char === "\n" ||
+                            char === "\r" ||
+                            char === "\t") {
+                            sanitizedJson += char;
+                        }
+                    }
+                    // Try to parse again
+                    const review = JSON.parse(sanitizedJson);
+                    // Validate structure
+                    if (!review.summary || !Array.isArray(review.comments)) {
+                        throw new Error("Invalid review structure after sanitization");
+                    }
+                    return review;
+                }
+                catch (secondError) {
+                    core.warning(`Second JSON parsing attempt failed: ${secondError instanceof Error ? secondError.message : String(secondError)}`);
+                    // Last resort: Try to extract summary and comments manually
+                    try {
+                        // Manual extraction of summary using safer regex approach
+                        const summaryRegex = /"summary"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/;
+                        const summaryMatch = jsonString.match(summaryRegex);
+                        const summary = summaryMatch
+                            ? summaryMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"')
+                            : "코드 리뷰 요약을 파싱할 수 없습니다.";
+                        // Attempt to extract comments with safer regex approach
+                        const comments = [];
+                        const commentRegex = /"path"\s*:\s*"([^"]*)"\s*,\s*"line"\s*:\s*(\d+)\s*,\s*"body"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/g;
+                        let match = null;
+                        // Use a safer approach without assignment in the condition
+                        match = commentRegex.exec(jsonString);
+                        while (match !== null) {
+                            comments.push({
+                                path: match[1],
+                                line: Number.parseInt(match[2], 10),
+                                body: match[3].replace(/\\n/g, "\n").replace(/\\"/g, '"'),
+                            });
+                            match = commentRegex.exec(jsonString);
+                        }
+                        core.info(`Manually extracted ${comments.length} comments`);
+                        return { summary, comments };
+                    }
+                    catch (manualError) {
+                        core.error(`Manual extraction failed: ${manualError instanceof Error ? manualError.message : String(manualError)}`);
+                        // Ultimate fallback
+                        return {
+                            summary: "코드 리뷰 응답 파싱에 실패했습니다. JSON 형식이 올바르지 않습니다.",
+                            comments: [],
+                        };
+                    }
+                }
+            }
         }
         catch (error) {
             if (error instanceof Error) {
@@ -41557,7 +41660,7 @@ class GitHubService {
                 owner,
                 repo,
                 issue_number: prNumber,
-                body: `# Claude AI 코드 리뷰\n\n${review}`,
+                body: `# AI 코드 리뷰\n\n${review}`,
             });
             core.info("Successfully posted code review comment");
         }
@@ -41574,14 +41677,30 @@ class GitHubService {
         const { owner, repo } = this.context.repo;
         const { summary, comments } = review;
         try {
-            // First post the overall review as a regular comment (like before)
-            await this.octokit.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number: prNumber,
-                body: `# AI 코드 리뷰\n\n${summary}`,
-            });
-            core.info("Successfully posted overall review comment");
+            // Check if the summary is from an error in Claude service
+            const isErrorSummary = summary.includes("코드 리뷰 응답 파싱에 실패했습니다") ||
+                summary.includes("Claude 코드 리뷰 생성 중 오류가 발생했습니다") ||
+                summary.includes("알 수 없는 오류로 코드 리뷰를 생성할 수 없습니다");
+            // Only post regular comment if it's not an error summary
+            if (!isErrorSummary) {
+                // First post the overall review as a regular comment (like before)
+                await this.octokit.rest.issues.createComment({
+                    owner,
+                    repo,
+                    issue_number: prNumber,
+                    body: `# AI 코드 리뷰\n\n${summary}`,
+                });
+                core.info("Successfully posted overall review comment");
+            }
+            else {
+                core.info("Skipping posting summary comment as it contains an error message");
+                return; // Exit early if there's an error summary
+            }
+            // Only continue with line comments if there are actual comments
+            if (comments.length === 0) {
+                core.info("No line-specific comments to post, skipping review creation");
+                return;
+            }
             // Get the latest commit SHA for the pull request
             const prResponse = await this.octokit.rest.pulls.get({
                 owner,
@@ -41589,30 +41708,122 @@ class GitHubService {
                 pull_number: prNumber,
             });
             const headSha = prResponse.data.head.sha;
-            // Format review comments in the GitHub expected format
-            const reviewComments = comments.map((comment) => ({
-                path: comment.path,
-                line: comment.line,
-                body: comment.body,
-                position: undefined, // Use line instead of position for accurate line location
-                side: "RIGHT", // Comment on the right side (new code)
-            }));
-            // Create the review with line-specific comments
-            await this.octokit.rest.pulls.createReview({
+            // Get the PR diff to determine which lines are part of the diff
+            const { data: files } = await this.octokit.rest.pulls.listFiles({
                 owner,
                 repo,
                 pull_number: prNumber,
-                commit_id: headSha,
-                body: "# AI 코드 리뷰 - 라인별 코멘트", // Just a title for the review itself
-                event: "COMMENT", // Use 'APPROVE' or 'REQUEST_CHANGES' if appropriate
-                comments: reviewComments,
             });
-            core.info("Successfully posted code review with line-specific comments");
+            // Create a map of valid line ranges for each file in the diff
+            const validLineRanges = {};
+            for (const file of files) {
+                if (!file.patch)
+                    continue;
+                validLineRanges[file.filename] = [];
+                // Parse the patch to extract changed line numbers
+                const hunkHeaders = file.patch.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/g) || [];
+                for (const header of hunkHeaders) {
+                    const match = header.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
+                    if (match) {
+                        const start = Number.parseInt(match[1], 10);
+                        const length = match[2] ? Number.parseInt(match[2], 10) : 1;
+                        validLineRanges[file.filename].push({
+                            start,
+                            end: start + length - 1,
+                        });
+                    }
+                }
+            }
+            // Filter comments to only include those on lines that are part of the diff
+            const validComments = comments
+                .filter((comment) => {
+                if (!comment.body || comment.line <= 0 || !comment.path) {
+                    return false;
+                }
+                const ranges = validLineRanges[comment.path];
+                if (!ranges)
+                    return false;
+                // Check if the comment's line falls within any of the changed ranges
+                return ranges.some((range) => comment.line >= range.start && comment.line <= range.end);
+            })
+                .map((comment) => ({
+                path: comment.path,
+                line: comment.line,
+                body: comment.body || "No comment provided",
+            }));
+            // Only create review if we have valid comments
+            if (validComments.length > 0) {
+                try {
+                    // Create the review with line-specific comments
+                    await this.octokit.rest.pulls.createReview({
+                        owner,
+                        repo,
+                        pull_number: prNumber,
+                        commit_id: headSha,
+                        body: "# AI 코드 리뷰 - 라인별 코멘트",
+                        event: "COMMENT",
+                        comments: validComments,
+                    });
+                    core.info("Successfully posted code review with line-specific comments");
+                }
+                catch (reviewError) {
+                    core.error(`Error creating review with comments: ${reviewError instanceof Error ? reviewError.message : String(reviewError)}`);
+                    // Fallback to individual comments
+                    core.info("Falling back to individual comments");
+                    for (const comment of validComments) {
+                        try {
+                            // Make sure we include the diff_hunk for the comment
+                            const fileInfo = files.find((f) => f.filename === comment.path);
+                            if (!fileInfo || !fileInfo.patch) {
+                                core.warning(`Could not find patch for file: ${comment.path}`);
+                                continue;
+                            }
+                            // Extract the relevant part of the patch for this line
+                            let diffHunk = "";
+                            const hunkHeaders = fileInfo.patch.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@[^\n]*\n(?:(?!@@)[^\n]*\n)*/g) || [];
+                            for (const hunk of hunkHeaders) {
+                                const match = hunk.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
+                                if (match) {
+                                    const start = Number.parseInt(match[1], 10);
+                                    const length = match[2] ? Number.parseInt(match[2], 10) : 1;
+                                    if (comment.line >= start &&
+                                        comment.line <= start + length - 1) {
+                                        diffHunk = hunk;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!diffHunk) {
+                                core.warning(`Could not find diff hunk for line ${comment.line} in file: ${comment.path}`);
+                                continue;
+                            }
+                            await this.octokit.rest.pulls.createReviewComment({
+                                owner,
+                                repo,
+                                pull_number: prNumber,
+                                commit_id: headSha,
+                                path: comment.path,
+                                body: comment.body,
+                                line: comment.line,
+                                side: "RIGHT",
+                                diff_hunk: diffHunk,
+                            });
+                        }
+                        catch (commentError) {
+                            core.error(`Error posting comment on ${comment.path}:${comment.line}: ${commentError instanceof Error ? commentError.message : String(commentError)}`);
+                        }
+                    }
+                }
+            }
+            else {
+                core.info("No valid line-specific comments to post, skipping review creation");
+            }
         }
         catch (error) {
             if (error instanceof Error) {
                 core.error(`Error posting review: ${error.message}`);
-                // Fallback to posting a regular comment if review creation fails
+                // Only fall back to a regular comment if we have real content to show
+                // and it's not an error message from Claude
                 try {
                     core.info("Falling back to posting a regular comment");
                     await this.createReviewComment(prNumber, `${summary}\n\n## 상세 코멘트\n\n${comments.map((c) => `- **${c.path}:${c.line}**: ${c.body}`).join("\n\n")}`);
@@ -41731,7 +41942,6 @@ class RepomixService {
                     path: outputFilePath,
                     includeRepositoryStructure: true,
                     removeComments: false,
-                    instructionFilePath: null,
                 },
                 ignore: {
                     useGitignore: true,
@@ -41773,44 +41983,6 @@ class RepomixService {
             core.error(`Failed to pack repository: ${error instanceof Error ? error.message : String(error)}`);
             return "Failed to pack repository with Repomix";
         }
-    }
-    /**
-     * Creates a custom instruction file for Repomix
-     * based on the PR context and the review requirements
-     */
-    createInstructionFile(context) {
-        const tempDir = path.join(process.cwd(), ".repomix-temp");
-        if (!fs.existsSync(tempDir)) {
-            fs.mkdirSync(tempDir);
-        }
-        const instructionPath = path.join(tempDir, "review-instructions.md");
-        // Create detailed instructions for Claude
-        const instructions = `# Code Review Instructions
-
-## Pull Request Information
-- **PR Title:** ${context.pullRequestTitle}
-- **PR Number:** ${context.pullRequestNumber}
-- **Repository:** ${context.repositoryOwner}/${context.repositoryName}
-- **Branch:** ${context.branch}
-- **Base:** ${context.baseRef}
-
-## Changed Files
-Please focus your review on these files that were changed in the PR:
-${context.files.map((file) => `- \`${file.filename}\` (${file.status})`).join("\n")}
-
-## Review Guidelines
-1. Identify bugs, security issues, and potential problems
-2. Suggest code improvements for readability and maintainability
-3. Check for performance issues
-4. Ensure proper error handling
-5. Verify code follows project patterns and conventions
-6. Provide specific, actionable feedback with code examples
-
-## Repository Context
-The code above contains the full repository context to help you understand the codebase better.
-`;
-        fs.writeFileSync(instructionPath, instructions);
-        return instructionPath;
     }
 }
 exports.RepomixService = RepomixService;

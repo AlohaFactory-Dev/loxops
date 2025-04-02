@@ -4,8 +4,8 @@ import type { FileChange, ReviewContext, StructuredReview } from "../types";
 import type { FileAnalyzerService } from "./file-analyzer";
 
 export class GitHubService {
-	private octokit: ReturnType<typeof github.getOctokit>;
-	private fileAnalyzer: FileAnalyzerService;
+	protected octokit: ReturnType<typeof github.getOctokit>;
+	protected fileAnalyzer: FileAnalyzerService;
 	private context = github.context;
 
 	constructor(token: string, fileAnalyzer: FileAnalyzerService) {
@@ -119,7 +119,7 @@ export class GitHubService {
 				owner,
 				repo,
 				issue_number: prNumber,
-				body: `# Claude AI 코드 리뷰\n\n${review}`,
+				body: `# AI 코드 리뷰\n\n${review}`,
 			});
 
 			core.info("Successfully posted code review comment");
@@ -181,18 +181,62 @@ export class GitHubService {
 
 			const headSha = prResponse.data.head.sha;
 
-			// Format review comments in the GitHub expected format
-			// Filter out invalid comments and ensure required fields are present
-			const reviewComments = comments
-				.filter((comment) => comment.body && comment.line > 0 && comment.path)
+			// Get the PR diff to determine which lines are part of the diff
+			const { data: files } = await this.octokit.rest.pulls.listFiles({
+				owner,
+				repo,
+				pull_number: prNumber,
+			});
+
+			// Create a map of valid line ranges for each file in the diff
+			const validLineRanges: Record<string, { start: number; end: number }[]> =
+				{};
+
+			for (const file of files) {
+				if (!file.patch) continue;
+
+				validLineRanges[file.filename] = [];
+
+				// Parse the patch to extract changed line numbers
+				const hunkHeaders =
+					file.patch.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/g) || [];
+
+				for (const header of hunkHeaders) {
+					const match = header.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
+					if (match) {
+						const start = Number.parseInt(match[1], 10);
+						const length = match[2] ? Number.parseInt(match[2], 10) : 1;
+						validLineRanges[file.filename].push({
+							start,
+							end: start + length - 1,
+						});
+					}
+				}
+			}
+
+			// Filter comments to only include those on lines that are part of the diff
+			const validComments = comments
+				.filter((comment) => {
+					if (!comment.body || comment.line <= 0 || !comment.path) {
+						return false;
+					}
+
+					const ranges = validLineRanges[comment.path];
+					if (!ranges) return false;
+
+					// Check if the comment's line falls within any of the changed ranges
+					return ranges.some(
+						(range) => comment.line >= range.start && comment.line <= range.end,
+					);
+				})
 				.map((comment) => ({
 					path: comment.path,
-					line: comment.line, // Use line for the diff line number
-					body: comment.body || "No comment provided", // Ensure body is never null
+					line: comment.line,
+					body: comment.body || "No comment provided",
 				}));
 
 			// Only create review if we have valid comments
-			if (reviewComments.length > 0) {
+			if (validComments.length > 0) {
 				try {
 					// Create the review with line-specific comments
 					await this.octokit.rest.pulls.createReview({
@@ -202,7 +246,7 @@ export class GitHubService {
 						commit_id: headSha,
 						body: "# AI 코드 리뷰 - 라인별 코멘트",
 						event: "COMMENT",
-						comments: reviewComments,
+						comments: validComments,
 					});
 
 					core.info(
@@ -215,8 +259,45 @@ export class GitHubService {
 
 					// Fallback to individual comments
 					core.info("Falling back to individual comments");
-					for (const comment of reviewComments) {
+					for (const comment of validComments) {
 						try {
+							// Make sure we include the diff_hunk for the comment
+							const fileInfo = files.find((f) => f.filename === comment.path);
+							if (!fileInfo || !fileInfo.patch) {
+								core.warning(`Could not find patch for file: ${comment.path}`);
+								continue;
+							}
+
+							// Extract the relevant part of the patch for this line
+							let diffHunk = "";
+							const hunkHeaders =
+								fileInfo.patch.match(
+									/@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@[^\n]*\n(?:(?!@@)[^\n]*\n)*/g,
+								) || [];
+							for (const hunk of hunkHeaders) {
+								const match = hunk.match(
+									/@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/,
+								);
+								if (match) {
+									const start = Number.parseInt(match[1], 10);
+									const length = match[2] ? Number.parseInt(match[2], 10) : 1;
+									if (
+										comment.line >= start &&
+										comment.line <= start + length - 1
+									) {
+										diffHunk = hunk;
+										break;
+									}
+								}
+							}
+
+							if (!diffHunk) {
+								core.warning(
+									`Could not find diff hunk for line ${comment.line} in file: ${comment.path}`,
+								);
+								continue;
+							}
+
 							await this.octokit.rest.pulls.createReviewComment({
 								owner,
 								repo,
@@ -225,6 +306,8 @@ export class GitHubService {
 								path: comment.path,
 								body: comment.body,
 								line: comment.line,
+								side: "RIGHT",
+								diff_hunk: diffHunk,
 							});
 						} catch (commentError) {
 							core.error(

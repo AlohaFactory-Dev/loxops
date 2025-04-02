@@ -10,10 +10,10 @@ import ignore from "ignore";
 import path from "node:path";
 
 export class FileAnalyzerService {
-	private options: ReviewOptions;
-	private ignoreFilter: ReturnType<typeof ignore>;
-	private octokit: ReturnType<typeof github.getOctokit>;
-	private context = github.context;
+	protected options: ReviewOptions;
+	protected ignoreFilter: ReturnType<typeof ignore>;
+	protected octokit: ReturnType<typeof github.getOctokit>;
+	protected context = github.context;
 
 	constructor(token: string, options: ReviewOptions) {
 		this.options = options;

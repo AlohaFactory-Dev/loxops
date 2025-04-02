@@ -36,14 +36,6 @@ async function run(): Promise<void> {
 		// Prepare review context
 		const context = await githubService.prepareReviewContext(maxFiles);
 
-		// Auto-detect project type if set to 'auto'
-		if (options.projectType === "auto") {
-			options.projectType = fileAnalyzerService.detectProjectType(
-				context.files,
-			);
-			core.info(`Auto-detected project type: ${options.projectType}`);
-		}
-
 		// Find related files if enabled
 		if (options.findRelatedFiles) {
 			context.relatedFiles =

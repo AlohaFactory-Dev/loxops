@@ -3,6 +3,7 @@ import { UnityPromptTemplate } from "./unity";
 import { SpringBootPromptTemplate } from "./springboot";
 import { AndroidPromptTemplate } from "./android";
 import { NextJsPromptTemplate } from "./nextjs";
+import { FastApiPromptTemplate } from "./fastapi";
 
 export function getPromptTemplate(type: ProjectType): PromptTemplate {
 	switch (type) {
@@ -14,6 +15,8 @@ export function getPromptTemplate(type: ProjectType): PromptTemplate {
 			return new AndroidPromptTemplate();
 		case "nextjs":
 			return new NextJsPromptTemplate();
+		case "fastapi":
+			return new FastApiPromptTemplate();
 		default:
 			return new BasePromptTemplate();
 	}

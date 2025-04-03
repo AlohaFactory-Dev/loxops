@@ -3,6 +3,7 @@ export type ProjectType =
 	| "springboot"
 	| "android"
 	| "nextjs"
+	| "fastapi"
 	| "auto";
 
 export interface FileChange {

@@ -1,12 +1,12 @@
-import { Anthropic } from "@anthropic-ai/sdk";
 import * as core from "@actions/core";
+import { Anthropic } from "@anthropic-ai/sdk";
+import { getPromptTemplate } from "../templates/base";
 import type {
+	ReviewComment,
 	ReviewContext,
 	ReviewOptions,
 	StructuredReview,
-	ReviewComment,
 } from "../types";
-import { getPromptTemplate } from "../templates/base";
 import { RepomixService } from "./repomix";
 
 export class ClaudeService {

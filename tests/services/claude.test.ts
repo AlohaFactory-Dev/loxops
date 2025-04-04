@@ -1,5 +1,5 @@
 import { ClaudeService } from "../../src/services/claude";
-import type { ReviewOptions, ProjectType } from "../../src/types";
+import type { ProjectType, ReviewOptions } from "../../src/types";
 
 // Mock the core module to avoid actual logging in tests
 jest.mock("@actions/core", () => ({

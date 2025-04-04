@@ -1,15 +1,12 @@
 {
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "noImplicitAny": false,
-    "strictNullChecks": false,
-    "resolveJsonModule": true,
-    "allowJs": true,
-    "esModuleInterop": true,
-    "noImplicitThis": false
-  },
-  "include": [
-    "src/**/*",
-    "local-run.ts"
-  ]
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"noImplicitAny": false,
+		"strictNullChecks": false,
+		"resolveJsonModule": true,
+		"allowJs": true,
+		"esModuleInterop": true,
+		"noImplicitThis": false
+	},
+	"include": ["src/**/*", "local-run.ts"]
 }

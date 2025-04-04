@@ -1,13 +1,13 @@
+import path from "node:path";
 import * as core from "@actions/core";
+import * as github from "@actions/github";
+import ignore from "ignore";
 import type {
 	FileChange,
 	RelatedFiles,
 	ReviewContext,
 	ReviewOptions,
 } from "../types";
-import * as github from "@actions/github";
-import ignore from "ignore";
-import path from "node:path";
 
 export class FileAnalyzerService {
 	protected options: ReviewOptions;

@@ -1,7 +1,7 @@
 import * as core from "@actions/core";
 import { ClaudeService } from "./services/claude";
-import { GitHubService } from "./services/github";
 import { FileAnalyzerService } from "./services/file-analyzer";
+import { GitHubService } from "./services/github";
 import type { ProjectType, ReviewOptions } from "./types";
 
 async function run(): Promise<void> {

@@ -41057,8 +41057,8 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(9999));
 const claude_1 = __nccwpck_require__(5518);
-const github_1 = __nccwpck_require__(5947);
 const file_analyzer_1 = __nccwpck_require__(1801);
+const github_1 = __nccwpck_require__(5947);
 async function run() {
     try {
         // Get inputs from GitHub Action
@@ -41152,8 +41152,8 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ClaudeService = void 0;
-const sdk_1 = __nccwpck_require__(4167);
 const core = __importStar(__nccwpck_require__(9999));
+const sdk_1 = __nccwpck_require__(4167);
 const base_1 = __nccwpck_require__(2136);
 const repomix_1 = __nccwpck_require__(4768);
 class ClaudeService {
@@ -41585,10 +41585,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.FileAnalyzerService = void 0;
+const node_path_1 = __importDefault(__nccwpck_require__(6760));
 const core = __importStar(__nccwpck_require__(9999));
 const github = __importStar(__nccwpck_require__(2819));
 const ignore_1 = __importDefault(__nccwpck_require__(2146));
-const node_path_1 = __importDefault(__nccwpck_require__(6760));
 class FileAnalyzerService {
     options;
     ignoreFilter;
@@ -41741,8 +41741,8 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.GitHubService = void 0;
-const github = __importStar(__nccwpck_require__(2819));
 const core = __importStar(__nccwpck_require__(9999));
+const github = __importStar(__nccwpck_require__(2819));
 class GitHubService {
     octokit;
     fileAnalyzer;
@@ -42150,11 +42150,11 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.RepomixService = void 0;
-const core = __importStar(__nccwpck_require__(9999));
-const path = __importStar(__nccwpck_require__(6760));
-const fs = __importStar(__nccwpck_require__(3024));
 const node_child_process_1 = __nccwpck_require__(1421);
+const fs = __importStar(__nccwpck_require__(3024));
+const path = __importStar(__nccwpck_require__(6760));
 const node_util_1 = __nccwpck_require__(7975);
+const core = __importStar(__nccwpck_require__(9999));
 const execAsync = (0, node_util_1.promisify)(node_child_process_1.exec);
 class RepomixService {
     /**
@@ -42316,11 +42316,11 @@ exports.AndroidPromptTemplate = AndroidPromptTemplate;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BasePromptTemplate = void 0;
 exports.getPromptTemplate = getPromptTemplate;
-const unity_1 = __nccwpck_require__(5216);
-const springboot_1 = __nccwpck_require__(608);
 const android_1 = __nccwpck_require__(8554);
-const nextjs_1 = __nccwpck_require__(5323);
 const fastapi_1 = __nccwpck_require__(6591);
+const nextjs_1 = __nccwpck_require__(5323);
+const springboot_1 = __nccwpck_require__(608);
+const unity_1 = __nccwpck_require__(5216);
 function getPromptTemplate(type) {
     switch (type) {
         case "unity":
@@ -42372,7 +42372,7 @@ class BasePromptTemplate {
         for (const file of files) {
             prompt += `### ${file.filename}\n`;
             if (file.status === "removed") {
-                prompt += `상태: 삭제됨\n\n`;
+                prompt += "상태: 삭제됨\n\n";
             }
             else {
                 if (file.patch) {

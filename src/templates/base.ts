@@ -4,11 +4,11 @@ import type {
 	ReviewContext,
 	UserComment,
 } from "../types";
-import { UnityPromptTemplate } from "./unity";
-import { SpringBootPromptTemplate } from "./springboot";
 import { AndroidPromptTemplate } from "./android";
-import { NextJsPromptTemplate } from "./nextjs";
 import { FastApiPromptTemplate } from "./fastapi";
+import { NextJsPromptTemplate } from "./nextjs";
+import { SpringBootPromptTemplate } from "./springboot";
+import { UnityPromptTemplate } from "./unity";
 
 export function getPromptTemplate(type: ProjectType): PromptTemplate {
 	switch (type) {
@@ -72,7 +72,7 @@ export class BasePromptTemplate implements PromptTemplate {
 			prompt += `### ${file.filename}\n`;
 
 			if (file.status === "removed") {
-				prompt += `상태: 삭제됨\n\n`;
+				prompt += "상태: 삭제됨\n\n";
 			} else {
 				if (file.patch) {
 					prompt += `#### 변경된 부분:\n\`\`\`diff\n${file.patch}\n\`\`\`\n\n`;

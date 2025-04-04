@@ -1,19 +1,19 @@
-import * as dotenv from "dotenv";
+import path from "node:path";
 import * as core from "@actions/core";
-import { ClaudeService } from "./src/services/claude";
-import { GitHubService } from "./src/services/github";
-import { FileAnalyzerService } from "./src/services/file-analyzer";
 import * as github from "@actions/github";
+import * as dotenv from "dotenv";
+import { ClaudeService } from "./src/services/claude";
+import { FileAnalyzerService } from "./src/services/file-analyzer";
+import { GitHubService } from "./src/services/github";
 import type {
 	FileChange,
 	ProjectType,
-	ReviewOptions,
-	ReviewContext,
-	StructuredReview,
-	ReviewComment,
 	RelatedFiles,
+	ReviewComment,
+	ReviewContext,
+	ReviewOptions,
+	StructuredReview,
 } from "./src/types";
-import path from "node:path";
 
 // Load environment variables from .env file
 dotenv.config();

@@ -1,0 +1,12 @@
+pre-push:
+  jobs:
+    - name: test
+      run: pnpm test
+
+pre-commit:
+  parallel: false
+  jobs:
+    - name: biome
+      run: biome check --fix
+    - name: build package
+      run: pnpm run build

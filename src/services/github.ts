@@ -1,6 +1,11 @@
 import * as github from "@actions/github";
 import * as core from "@actions/core";
-import type { FileChange, ReviewContext, StructuredReview } from "../types";
+import type {
+	FileChange,
+	ReviewContext,
+	StructuredReview,
+	UserComment,
+} from "../types";
 import type { FileAnalyzerService } from "./file-analyzer";
 
 export class GitHubService {
@@ -119,7 +124,7 @@ export class GitHubService {
 				owner,
 				repo,
 				issue_number: prNumber,
-				body: `# AI 코드 리뷰\n\n${review}`,
+				body: `# Loxops\n\n${review}`,
 			});
 
 			core.info("Successfully posted code review comment");
@@ -148,7 +153,7 @@ export class GitHubService {
 
 			// Only post regular comment if it's not an error summary
 			if (!isErrorSummary) {
-				const reviewBody = `# AI 코드 리뷰\n\n## Overall Assessment\n\n${summary}`;
+				const reviewBody = `# Loxops\n\n## Overall Assessment\n\n${summary}`;
 
 				await this.octokit.rest.issues.createComment({
 					owner,
@@ -245,7 +250,7 @@ export class GitHubService {
 						repo,
 						pull_number: prNumber,
 						commit_id: headSha,
-						body: "# AI 코드 리뷰 - 라인별 코멘트",
+						body: "# Loxops - 라인별 코멘트",
 						event: "COMMENT",
 						comments: validComments,
 					});
@@ -343,6 +348,76 @@ export class GitHubService {
 		}
 	}
 
+	async getCommentsForPR(prNumber: number): Promise<UserComment[]> {
+		const { owner, repo } = this.context.repo;
+		core.info(`Fetching comments for PR #${prNumber}...`);
+
+		const comments: UserComment[] = [];
+
+		try {
+			// Get issue comments (general PR comments)
+			const issueComments = await this.octokit.rest.issues.listComments({
+				owner,
+				repo,
+				issue_number: prNumber,
+			});
+
+			// Get PR review comments (inline comments)
+			const reviewComments = await this.octokit.rest.pulls.listReviewComments({
+				owner,
+				repo,
+				pull_number: prNumber,
+			});
+
+			// Process issue comments
+			for (const comment of issueComments.data) {
+				// Skip bot comments including our own AI reviews
+				if (
+					comment.user?.type === "Bot" ||
+					comment.body?.startsWith("# Loxops")
+				) {
+					continue;
+				}
+
+				if (comment.user && comment.body && comment.created_at) {
+					comments.push({
+						id: comment.id.toString(),
+						user: comment.user.login,
+						body: comment.body,
+						createdAt: comment.created_at,
+					});
+				}
+			}
+
+			// Process review comments
+			for (const comment of reviewComments.data) {
+				// Skip bot comments
+				if (comment.user?.type === "Bot") {
+					continue;
+				}
+
+				if (comment.user && comment.body && comment.created_at) {
+					comments.push({
+						id: comment.id.toString(),
+						user: comment.user.login,
+						body: comment.body,
+						createdAt: comment.created_at,
+						path: comment.path,
+						line: comment.line || comment.original_line || undefined,
+					});
+				}
+			}
+
+			core.info(`Found ${comments.length} user comments`);
+			return comments;
+		} catch (error) {
+			if (error instanceof Error) {
+				core.warning(`Error fetching comments: ${error.message}`);
+			}
+			return [];
+		}
+	}
+
 	async prepareReviewContext(maxFiles: number): Promise<ReviewContext> {
 		const pr = await this.getPullRequestDetails();
 		let files = await this.getChangedFiles(pr.number);
@@ -372,6 +447,9 @@ export class GitHubService {
 			}
 		}
 
+		// Fetch user comments
+		const userComments = await this.getCommentsForPR(pr.number);
+
 		// Prepare review context
 		const context: ReviewContext = {
 			pullRequestNumber: pr.number,
@@ -383,6 +461,7 @@ export class GitHubService {
 			baseRef: pr.base.ref,
 			files,
 			relatedFiles: {},
+			userComments,
 		};
 
 		return context;

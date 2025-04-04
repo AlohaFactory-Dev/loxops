@@ -29,6 +29,15 @@ export interface ReviewOptions {
 	commentStdout?: boolean;
 }
 
+export interface UserComment {
+	id: string;
+	user: string;
+	body: string;
+	createdAt: string;
+	path?: string;
+	line?: number;
+}
+
 export interface ReviewContext {
 	pullRequestNumber: number;
 	pullRequestTitle: string;
@@ -39,6 +48,7 @@ export interface ReviewContext {
 	baseRef: string;
 	files: FileChange[];
 	relatedFiles: RelatedFiles;
+	userComments?: UserComment[];
 }
 
 export interface PromptTemplate {

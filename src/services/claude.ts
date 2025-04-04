@@ -124,6 +124,7 @@ Please ensure your JSON is valid and properly formatted. Make sure to escape any
 	protected async callClaudeApi(systemPrompt: string): Promise<string> {
 		core.debug(`Using model: ${this.options.model}`);
 		core.debug(`System prompt length: ${systemPrompt.length} characters`);
+		core.debug(`System prompt: ${systemPrompt}`);
 
 		const message = await this.client.messages.create({
 			model: this.options.model,

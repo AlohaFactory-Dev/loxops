@@ -41,7 +41,7 @@ inputs:
     description: "Maximum number of comments to include in the review (default: all)"
     required: false
   comment-priority:
-    description: "Filter comments by priority (all, high, medium-high, critical-only)"
+    description: "Filter comments by priority (all, medium, high, critical)"
     required: false
     default: "medium"
 

@@ -1,47 +1,54 @@
-name: 'Loxops - AI Code Review Assistant'
-description: 'Automated code reviews using Claude AI with support for various project types'
-author: 'Aloha Factory'
+name: "Loxops - AI Code Review Assistant"
+description: "Automated code reviews using Claude AI with support for various project types"
+author: "Aloha Factory"
 
 inputs:
   github-token:
-    description: 'GitHub token for API authentication'
+    description: "GitHub token for API authentication"
     required: true
   claude-api-key:
-    description: 'Claude API key'
+    description: "Claude API key"
     required: true
   project-type:
-    description: 'Project type (unity, springboot, android, nextjs, or auto)'
+    description: "Project type (unity, springboot, android, nextjs, or auto)"
     required: false
-    default: 'auto'
+    default: "auto"
   file-extensions:
-    description: 'Comma-separated list of file extensions to analyze'
+    description: "Comma-separated list of file extensions to analyze"
     required: false
-    default: '.ts,.js,.tsx,.jsx,.cs,.java,.kt,.xml,.json,.yaml,.yml'
+    default: ".ts,.js,.tsx,.jsx,.cs,.java,.kt,.xml,.json,.yaml,.yml"
   exclude-patterns:
-    description: 'Comma-separated list of glob patterns to exclude'
+    description: "Comma-separated list of glob patterns to exclude"
     required: false
-    default: 'node_modules/**,dist/**,build/**,*.min.js,*.test.*'
+    default: "node_modules/**,dist/**,build/**,*.min.js,*.test.*"
   find-related-files:
-    description: 'Whether to find and analyze related files'
+    description: "Whether to find and analyze related files"
     required: false
-    default: 'true'
+    default: "true"
   max-files:
-    description: 'Maximum number of files to analyze in a single PR'
+    description: "Maximum number of files to analyze in a single PR"
     required: false
-    default: '10'
+    default: "10"
   model:
-    description: 'Claude model to use'
+    description: "Claude model to use"
     required: false
-    default: 'claude-3-5-haiku-20241022'
+    default: "claude-3-5-haiku-20241022"
   use-repomix:
-    description: 'Whether to use Repomix to pack repository for comprehensive review'
+    description: "Whether to use Repomix to pack repository for comprehensive review"
     required: false
-    default: 'true'
+    default: "true"
+  max-comments:
+    description: "Maximum number of comments to include in the review (default: all)"
+    required: false
+  comment-priority:
+    description: "Filter comments by priority (all, medium, high, critical)"
+    required: false
+    default: "medium"
 
 runs:
-  using: 'node20'
-  main: 'dist/index.js'
+  using: "node20"
+  main: "dist/index.js"
 
 branding:
-  icon: 'code'
-  color: 'purple'
+  icon: "code"
+  color: "purple"

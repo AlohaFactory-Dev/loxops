@@ -16,6 +16,15 @@ async function run(): Promise<void> {
 		const maxFiles = Number.parseInt(core.getInput("max-files"), 10);
 		const model = core.getInput("model");
 		const useRepomix = core.getInput("use-repomix") === "true";
+		const maxComments = core.getInput("max-comments")
+			? Number.parseInt(core.getInput("max-comments"))
+			: undefined;
+		const commentPriority = core.getInput("comment-priority") as
+			| "all"
+			| "medium"
+			| "high"
+			| "critical"
+			| undefined;
 
 		// Initialize options
 		const options: ReviewOptions = {
@@ -26,6 +35,8 @@ async function run(): Promise<void> {
 			maxFiles,
 			model,
 			useRepomix,
+			maxComments,
+			commentPriority: commentPriority || "medium",
 		};
 
 		// Initialize services

@@ -62,63 +62,63 @@ export class ClaudeService {
 	}
 
 	protected getResponseFormatInstructions(): string {
-		// Keep this the same as in your original code
-		return `\n\n# Response Format
-Please provide your review in a structured JSON format that MUST ONLY include these exact fields:
-1. "summary" - A string with overall feedback
-2. "comments" - An array of comment objects
+		return `\n\n# Response Format Instructions
 
-Your ENTIRE response must be valid JSON enclosed in a markdown code block. Do not include any text, explanations, or comments outside the JSON code block.
+You must respond with ONLY a JSON object inside a code block. No other text allowed.
 
-The JSON MUST follow this exact structure:
-{
-  "summary": string,
-  "comments": [
-    {
-      "path": string,
-      "line": number,
-      "body": string
-    },
-    ...
-  ]
-}
-
-DO NOT add any extra fields to this structure. Fields like "overview", "keyChanges", "recommendedImprovements", "potentialRisks", or any other fields not explicitly listed above are NOT allowed and will cause parsing errors.
-
-Format both the "summary" and comment "body" fields as markdown text. This allows you to include:
-- Code blocks with syntax highlighting
-- Bullet points and numbered lists
-- Bold/italic text for emphasis
-- Links to documentation when relevant
-
-IMPORTANT: When including code snippets or special characters in your response, ensure they are properly escaped for JSON. Double quotes must be escaped with a backslash (\\"), newlines with \\n, tabs with \\t, and backslashes themselves with a double backslash (\\\\).
-
-IMPORTANT: When using code blocks with backticks in your response, each backtick should be properly escaped as \\\` in the JSON. For triple backticks that start/end code blocks, use \\\`\\\`\\\` in the JSON.
-
-When writing Korean or other non-Latin characters, make sure they are properly encoded in UTF-8. Do not add extra escape sequences for non-Latin characters.
-
-The newlines in markdown should be properly escaped in the JSON as "\\n".
-
-Example format:
 \`\`\`json
 {
-  "summary": "전반적으로 코드는 잘 구성되어 있지만, 몇 가지 개선할 영역이 있습니다:\\n\\n- 일부 함수명이 더 명확할 수 있음\\n- 오류 처리가 향상될 수 있음\\n- 더 많은 단위 테스트를 고려해보세요",
+  "summary": "Brief overall assessment",
   "comments": [
     {
-      "path": "src/utils/parser.ts",
+      "path": "file/path.ext",
       "line": 42,
-      "body": "이 함수 이름이 설명적이지 않습니다. 무엇을 하는지 더 명확하게 설명하도록 이름을 변경하는 것을 고려하세요.\\n\\n예시:\\n\\n\\\`\\\`\\\`typescript\\n// 대신\\nfunction process(data) {\\n  // ...\\n}\\n\\n// 다음과 같이 고려\\nfunction validateUserInput(data) {\\n  // ...\\n}\\n\\\`\\\`\\\`"
-    },
-    {
-      "path": "src/models/user.ts",
-      "line": 57,
-      "body": "오류 처리를 개선할 수 있습니다. try/catch 블록을 사용하고 더 구체적인 오류 메시지를 제공하는 것을 고려하세요."
+      "priority": "critical|high|medium|low",
+      "body": "Comment with markdown formatting"
     }
   ]
 }
 \`\`\`
 
-Please ensure your JSON is valid and properly formatted. Make sure to escape any special characters in the JSON to prevent parsing errors.`;
+## Key Requirements
+
+1. **Structure:** Include only "summary" and "comments" fields
+2. **Focus:** Address only 3-5 most important issues
+3. **Priority:** Label each comment as "critical", "high", "medium", or "low"
+4. **Comments:** Format your comment bodies with markdown:
+   - Use code blocks with syntax highlighting
+   - Use bullet points and formatting
+   - Do NOT include priority text in comments (use the priority field)
+
+## Formatting Guidelines
+
+- Properly escape JSON characters: \\" for quotes, \\n for newlines, \\\` for backticks
+- For code blocks use triple backticks with language: \\\`\\\`\\\`language
+- Use UTF-8 for Korean or other non-Latin characters without extra escaping
+
+## Example
+
+\`\`\`json
+{
+  "summary": "코드는 잘 작성되었지만 몇 가지 중요한 이슈가 있습니다:\\n\\n- 일부 함수명이 명확하지 않음\\n- 오류 처리 개선 필요\\n- 성능 이슈",
+  "comments": [
+    {
+      "path": "src/utils.ts",
+      "line": 42,
+      "priority": "high",
+      "body": "함수 이름을 더 명확하게 변경하세요:\\n\\n\\\`\\\`\\\`typescript\\n// Before\\nfunction process(data) { ... }\\n\\n// After\\nfunction validateUserInput(data) { ... }\\n\\\`\\\`\\\`"
+    },
+    {
+      "path": "src/models.ts",
+      "line": 57,
+      "priority": "critical",
+      "body": "예외 처리가 부족합니다. try/catch를 추가하세요."
+    }
+  ]
+}
+\`\`\`
+
+Ensure your output is valid JSON and follows this exact structure.`;
 	}
 
 	protected async callClaudeApi(systemPrompt: string): Promise<string> {
@@ -149,7 +149,8 @@ Please ensure your JSON is valid and properly formatted. Make sure to escape any
 	): Promise<StructuredReview> {
 		const jsonString = this.extractJsonFromResponse(responseText);
 		try {
-			return this.parseReviewJson(jsonString);
+			const review = this.parseReviewJson(jsonString);
+			return this.filterReviewComments(review);
 		} catch (firstError) {
 			core.warning(
 				`First JSON parsing attempt failed: ${firstError instanceof Error ? firstError.message : String(firstError)}`,
@@ -243,6 +244,7 @@ Please ensure your JSON is valid and properly formatted. Make sure to escape any
 		return {
 			path: comment.path,
 			line: comment.line,
+			priority: comment.priority,
 			body: body,
 		};
 	}
@@ -464,6 +466,87 @@ Please ensure your JSON is valid and properly formatted. Make sure to escape any
 					"Code review response parsing failed completely. The response format might be severely incorrect.",
 				comments: [],
 			};
+		}
+	}
+
+	/**
+	 * Filter and prioritize comments based on user preferences
+	 */
+	protected filterReviewComments(review: StructuredReview): StructuredReview {
+		if (!review.comments || review.comments.length === 0) {
+			return review;
+		}
+
+		// Sort comments by priority/severity
+		const sortedComments = [...review.comments].sort((a, b) => {
+			return this.getCommentPriority(b) - this.getCommentPriority(a);
+		});
+
+		// Filter by priority level if specified
+		let filteredComments = sortedComments;
+		if (this.options.commentPriority) {
+			const minPriority = this.getMinPriorityLevel(
+				this.options.commentPriority,
+			);
+			filteredComments = sortedComments.filter(
+				(comment) => this.getCommentPriority(comment) >= minPriority,
+			);
+		}
+
+		// Limit number of comments if specified
+		if (this.options.maxComments && this.options.maxComments > 0) {
+			filteredComments = filteredComments.slice(0, this.options.maxComments);
+		}
+
+		// Update summary to reflect filtering if needed
+		let summary = review.summary;
+		if (filteredComments.length < review.comments.length) {
+			const removedCount = review.comments.length - filteredComments.length;
+			summary = `${summary}\n\n_참고: ${review.comments.length}개 중 ${filteredComments.length}개의 주요 코멘트만 표시되었습니다. ${removedCount}개의 낮은 우선순위 코멘트는 필터링되었습니다._`;
+		}
+
+		return {
+			summary,
+			comments: filteredComments,
+		};
+	}
+
+	/**
+	 * Extract priority level from comment (critical = 3, high = 2, medium = 1, low = 0)
+	 */
+	private getCommentPriority(comment: ReviewComment): number {
+		// Use the explicit priority field if available
+		if (comment.priority) {
+			switch (comment.priority) {
+				case "critical":
+					return 3;
+				case "high":
+					return 2;
+				case "medium":
+					return 1;
+				case "low":
+					return 0;
+			}
+		}
+
+		return 0;
+	}
+
+	/**
+	 * Get minimum priority level based on user preference
+	 */
+	private getMinPriorityLevel(
+		priority: "all" | "medium" | "high" | "critical",
+	): number {
+		switch (priority) {
+			case "critical":
+				return 3;
+			case "high":
+				return 2;
+			case "medium":
+				return 1;
+			default:
+				return 0;
 		}
 	}
 

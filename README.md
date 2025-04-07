@@ -68,6 +68,8 @@ jobs:
 - `max-files`: 한 번에 분석할 최대 파일 수
 - `model`: 사용할 Claude 모델
 - `use-repomix`: Repomix를 사용하여 전체 저장소 컨텍스트를 AI에게 제공할지 여부 (기본값: true)
+- `max_comments`: 생성할 최대 코멘트 수 (기본값: 모든 코멘트)
+- `comment_priority`: 코멘트 우선순위 필터링 ('all', 'medium', 'high', 'critical', 기본값: 'medium')
 
 ## 지원하는 프로젝트 유형
 
@@ -85,6 +87,35 @@ jobs:
 - **관련 코드 참조**: 변경 사항과 관련된 다른 파일의 코드를 참조하여 더 정확한 피드백을 제공합니다.
 
 Repomix 사용을 비활성화하려면 `use-repomix: 'false'`로 설정하세요.
+
+## 코멘트 필터링 및 우선순위화
+
+코드 리뷰 도구가 너무 많은 코멘트를 생성하면 실제 리뷰어가 중요한 문제점을 놓칠 수 있습니다. 이 문제를 해결하기 위해 다음과 같은 기능을 제공합니다:
+
+- **우선순위 기반 필터링**: `comment_priority` 옵션을 통해 코멘트의 중요도에 따라 필터링할 수 있습니다:
+  - `critical-only`: 가장 중요한(높은 심각도) 코멘트만 표시
+  - `high`: 중간 이상 중요도의 코멘트만 표시
+  - `medium-high`: 낮은 중요도를 제외한 모든 코멘트 표시 (기본값)
+  - `all`: 모든 코멘트 표시
+
+- **코멘트 수 제한**: `max_comments` 옵션을 사용하여 PR에 표시될 최대 코멘트 수를 제한할 수 있습니다. 설정한 수를 초과하는 코멘트는 우선순위가 낮은 것부터 자동으로 필터링됩니다.
+
+- **우선순위 자동 감지**: 코드 리뷰 도구는 코멘트 내용에서 "심각도: 높음", "priority: high" 등의 표현을 인식하여 자동으로 우선순위를 부여합니다.
+
+- **요약 정보 제공**: 필터링된 코멘트가 있을 경우, 리뷰 요약에 몇 개의 코멘트가 필터링되었는지 정보를 추가합니다.
+
+이러한 필터링 옵션을 사용하면 PR 작성자와 리뷰어 모두 중요한 이슈에 집중할 수 있어 코드 리뷰의 효율성이 향상됩니다.
+
+예시 설정:
+```yaml
+- name: Run Code Review Assistant
+  uses: AlohaFactory-Dev/loxops@v1.0.1
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    claude-api-key: ${{ secrets.CLAUDE_API_KEY }}
+    max_comments: 5
+    comment_priority: 'high'
+```
 
 ## 비용 최적화 팁
 

@@ -1,5 +1,5 @@
 import { ClaudeService } from "../../src/services/claude";
-import type { ProjectType, ReviewOptions } from "../../src/types";
+import type { ReviewOptions } from "../../src/types";
 
 // Mock the core module to avoid actual logging in tests
 jest.mock("@actions/core", () => ({
@@ -234,6 +234,306 @@ describe("ClaudeService", () => {
 			// Verify the triple backticks are preserved properly
 			expect(result.comments[0].body).toContain("```typescript");
 			expect(result.comments[0].body).toContain("function example()");
+		});
+
+		test("parses valid JSON response with priority field", async () => {
+			const response = `\`\`\`json
+{
+  "summary": "Good code",
+  "comments": [
+    {
+      "path": "file.ts",
+      "line": 5,
+      "priority": "high",
+      "body": "Consider using a different approach:\\n\\n\\\`\\\`\\\`typescript\\nconst x = 1;\\n\\\`\\\`\\\`"
+    }
+  ]
+}
+\`\`\``;
+
+			const result = await service.parseJsonExposed(response);
+			expect(result.summary).toBe("Good code");
+			expect(result.comments).toHaveLength(1);
+			expect(result.comments[0].priority).toBe("high");
+			expect(result.comments[0].body).toContain("```typescript");
+		});
+	});
+
+	describe("Comment Filtering", () => {
+		test("should limit comments based on maxComments option", async () => {
+			// Create a service with maxComments option
+			const options: ReviewOptions = {
+				model: "claude-3-opus-20240229",
+				projectType: "auto",
+				useRepomix: false,
+				fileExtensions: [".ts", ".js"],
+				excludePatterns: [],
+				findRelatedFiles: false,
+				maxFiles: 10,
+				maxComments: 2,
+			};
+			const limitService = new TestableClaudeService("fake-api-key", options);
+
+			// Create a test response with multiple comments
+			const response = `\`\`\`json
+{
+  "summary": "Test summary",
+  "comments": [
+    {
+      "path": "file1.ts",
+      "line": 10,
+      "body": "Comment 1"
+    },
+    {
+      "path": "file2.ts",
+      "line": 20,
+      "body": "Comment 2"
+    },
+    {
+      "path": "file3.ts",
+      "line": 30,
+      "body": "Comment 3"
+    },
+    {
+      "path": "file4.ts",
+      "line": 40,
+      "body": "Comment 4"
+    }
+  ]
+}
+\`\`\``;
+
+			const result = await limitService.parseJsonExposed(response);
+			
+			// Verify only the first 2 comments were kept
+			expect(result.comments).toHaveLength(2);
+			expect(result.comments[0].path).toBe("file1.ts");
+			expect(result.comments[1].path).toBe("file2.ts");
+			
+			// Verify summary includes a note about filtered comments
+			expect(result.summary).toContain("참고: 4개 중 2개의 주요 코멘트만 표시되었습니다");
+		});
+
+		test("should filter comments based on commentPriority option", async () => {
+			// Create a service with commentPriority option
+			const options: ReviewOptions = {
+				model: "claude-3-opus-20240229",
+				projectType: "auto",
+				useRepomix: false,
+				fileExtensions: [".ts", ".js"],
+				excludePatterns: [],
+				findRelatedFiles: false,
+				maxFiles: 10,
+				commentPriority: "high",
+			};
+			const priorityService = new TestableClaudeService("fake-api-key", options);
+
+			// Create a test response with various priority comments
+			const response = `\`\`\`json
+{
+  "summary": "Test summary",
+  "comments": [
+    {
+      "path": "file1.ts",
+      "line": 10,
+      "priority": "low",
+      "body": "Low priority comment"
+    },
+    {
+      "path": "file2.ts",
+      "line": 20,
+      "priority": "medium",
+      "body": "Medium priority comment"
+    },
+    {
+      "path": "file3.ts",
+      "line": 30,
+      "priority": "high",
+      "body": "High priority comment"
+    },
+    {
+      "path": "file4.ts",
+      "line": 40,
+      "priority": "critical",
+      "body": "Critical priority comment"
+    }
+  ]
+}
+\`\`\``;
+
+			const result = await priorityService.parseJsonExposed(response);
+			
+			// Verify only high and critical comments were kept (priority >= high)
+			expect(result.comments).toHaveLength(2);
+			expect(result.comments[0].priority).toBe("critical");
+			expect(result.comments[1].priority).toBe("high");
+			
+			// Verify summary includes a note about filtered comments
+			expect(result.summary).toContain("참고: 4개 중 2개의 주요 코멘트만 표시되었습니다");
+		});
+
+		test("should sort comments by priority", async () => {
+			// Create a service with no filtering
+			const options: ReviewOptions = {
+				model: "claude-3-opus-20240229",
+				projectType: "auto",
+				useRepomix: false,
+				fileExtensions: [".ts", ".js"],
+				excludePatterns: [],
+				findRelatedFiles: false,
+				maxFiles: 10,
+			};
+			const service = new TestableClaudeService("fake-api-key", options);
+
+			// Create a test response with mixed priority comments in random order
+			const response = `\`\`\`json
+{
+  "summary": "Test summary",
+  "comments": [
+    {
+      "path": "file1.ts",
+      "line": 10,
+      "priority": "medium",
+      "body": "Medium priority comment"
+    },
+    {
+      "path": "file2.ts",
+      "line": 20,
+      "priority": "low",
+      "body": "Low priority comment"
+    },
+    {
+      "path": "file3.ts",
+      "line": 30,
+      "priority": "critical",
+      "body": "Critical priority comment"
+    },
+    {
+      "path": "file4.ts",
+      "line": 40,
+      "priority": "high",
+      "body": "High priority comment"
+    }
+  ]
+}
+\`\`\``;
+
+			const result = await service.parseJsonExposed(response);
+			
+			// Verify comments are sorted by priority (critical, high, medium, low)
+			expect(result.comments).toHaveLength(4);
+			expect(result.comments[0].priority).toBe("critical");
+			expect(result.comments[1].priority).toBe("high");
+			expect(result.comments[2].priority).toBe("medium");
+			expect(result.comments[3].priority).toBe("low");
+		});
+
+		test("should combine maxComments and commentPriority options", async () => {
+			// Create a service with both maxComments and commentPriority
+			const options: ReviewOptions = {
+				model: "claude-3-opus-20240229",
+				projectType: "auto",
+				useRepomix: false,
+				fileExtensions: [".ts", ".js"],
+				excludePatterns: [],
+				findRelatedFiles: false,
+				maxFiles: 10,
+				maxComments: 1,
+				commentPriority: "medium",
+			};
+			const combinedService = new TestableClaudeService("fake-api-key", options);
+
+			// Create a test response with various priority comments
+			const response = `\`\`\`json
+{
+  "summary": "Test summary",
+  "comments": [
+    {
+      "path": "file1.ts",
+      "line": 10,
+      "priority": "low",
+      "body": "Low priority comment"
+    },
+    {
+      "path": "file2.ts",
+      "line": 20,
+      "priority": "medium",
+      "body": "Medium priority comment"
+    },
+    {
+      "path": "file3.ts",
+      "line": 30,
+      "priority": "high",
+      "body": "High priority comment"
+    },
+    {
+      "path": "file4.ts",
+      "line": 40,
+      "priority": "critical",
+      "body": "Critical priority comment"
+    }
+  ]
+}
+\`\`\``;
+
+			const result = await combinedService.parseJsonExposed(response);
+			
+			// First filter by priority (medium, high, critical) then limit to 1
+			// So we should only get the critical comment
+			expect(result.comments).toHaveLength(1);
+			expect(result.comments[0].priority).toBe("critical");
+			
+			// Verify summary includes a note about filtered comments
+			expect(result.summary).toContain("참고: 4개 중 1개의 주요 코멘트만 표시되었습니다");
+		});
+
+		test("should handle missing priority values correctly", async () => {
+			// Create a service with commentPriority option
+			const options: ReviewOptions = {
+				model: "claude-3-opus-20240229",
+				projectType: "auto",
+				useRepomix: false,
+				fileExtensions: [".ts", ".js"],
+				excludePatterns: [],
+				findRelatedFiles: false,
+				maxFiles: 10,
+				commentPriority: "medium",
+			};
+			const service = new TestableClaudeService("fake-api-key", options);
+
+			// Create a test response with some missing priority values
+			const response = `\`\`\`json
+{
+  "summary": "Test summary",
+  "comments": [
+    {
+      "path": "file1.ts",
+      "line": 10,
+      "body": "Comment with no priority"
+    },
+    {
+      "path": "file2.ts",
+      "line": 20,
+      "priority": "medium",
+      "body": "Medium priority comment"
+    },
+    {
+      "path": "file3.ts",
+      "line": 30,
+      "priority": "high",
+      "body": "High priority comment"
+    }
+  ]
+}
+\`\`\``;
+
+			const result = await service.parseJsonExposed(response);
+			
+			// Comments without priority should be treated as lowest priority
+			// So with medium filter, only medium and high should remain
+			expect(result.comments).toHaveLength(2);
+			expect(result.comments[0].priority).toBe("high");
+			expect(result.comments[1].priority).toBe("medium");
 		});
 	});
 });

@@ -27,6 +27,8 @@ export interface ReviewOptions {
 	model: string;
 	useRepomix: boolean;
 	commentStdout?: boolean;
+	maxComments?: number;
+	commentPriority?: "all" | "medium" | "high" | "critical";
 }
 
 export interface UserComment {
@@ -59,6 +61,7 @@ export interface ReviewComment {
 	path: string;
 	line: number;
 	body: string;
+	priority?: "critical" | "high" | "medium" | "low";
 }
 
 export interface StructuredReview {

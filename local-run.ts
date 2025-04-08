@@ -261,10 +261,14 @@ class LocalGitHubService extends GitHubService {
 		const isSynchronizeEvent = process.env.SIMULATE_SYNCHRONIZE === "true";
 		const commitSha = process.env.COMMIT_SHA;
 
-		if (isSynchronizeEvent && commitSha) {
-			// For synchronize events, only get files from the specified commit
-			core.info('Simulated PR synchronize event - getting only files from specified commit');
-			files = await this.getFilesFromCommit(commitSha);
+		if (isSynchronizeEvent) {
+			if (commitSha) {
+				// For synchronize events, only get files from the specified commit
+				core.info('Simulated PR synchronize event - getting only files from specified commit');
+				files = await this.getFilesFromCommit(commitSha);
+			} else {
+				core.warning('Simulated PR synchronize event - COMMIT_SHA is empty, cannot fetch files from commit');
+			}
 		} else {
 			// For other events, get all files changed in the PR
 			files = await this.getChangedFiles(pr.number);

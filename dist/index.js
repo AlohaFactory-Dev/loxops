@@ -42286,7 +42286,7 @@ class RepomixService {
                 fs.mkdirSync(tempDir);
             }
             // Output file path
-            const outputFilePath = path.join(tempDir, "repo-pack.md");
+            const outputFilePath = path.join(tempDir, "repomix-output.xml");
             // Create a basic config file for Repomix
             const configFilePath = path.join(tempDir, "repomix.config.json");
             const config = {

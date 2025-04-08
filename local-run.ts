@@ -214,13 +214,65 @@ class LocalGitHubService extends GitHubService {
 		}
 	}
 
+	// Override getFilesFromCommit to use local owner/repo
+	async getFilesFromCommit(commitSha: string): Promise<FileChange[]> {
+		core.info(`Fetching files changed in commit ${commitSha}...`);
+		try {
+			const response = await this.octokit.rest.repos.getCommit({
+				owner: this.ownerName,
+				repo: this.repoName,
+				ref: commitSha,
+			});
+
+			const changedFiles: FileChange[] = [];
+
+			for (const file of response.data.files || []) {
+				// Use fileAnalyzer from the base class property
+				if (!this.fileAnalyzer.shouldAnalyzeFile(file.filename)) {
+					continue;
+				}
+
+				const fileChange: FileChange = {
+					filename: file.filename,
+					status: file.status as "added" | "modified" | "removed" | "renamed",
+					patch: file.patch,
+				};
+
+				changedFiles.push(fileChange);
+			}
+
+			core.info(`Found ${changedFiles.length} relevant files in commit ${commitSha}`);
+			return changedFiles;
+		} catch (error) {
+			if (error instanceof Error) {
+				core.warning(`Error fetching files for commit ${commitSha}: ${error.message}`);
+			}
+			return [];
+		}
+	}
+
 	// Override prepareReviewContext to fully replicate base logic using local owner/repo
 	async prepareReviewContext(maxFiles: number): Promise<ReviewContext> {
 		// Fetch PR details using the overridden method
 		const pr = await this.getPullRequestDetails();
+		let files: FileChange[] = [];
 
-		// Fetch changed files using the overridden method
-		let files = await this.getChangedFiles(pr.number);
+		// Check if this is a simulated synchronize event
+		const isSynchronizeEvent = process.env.SIMULATE_SYNCHRONIZE === "true";
+		const commitSha = process.env.COMMIT_SHA;
+
+		if (isSynchronizeEvent) {
+			if (commitSha) {
+				// For synchronize events, only get files from the specified commit
+				core.info('Simulated PR synchronize event - getting only files from specified commit');
+				files = await this.getFilesFromCommit(commitSha);
+			} else {
+				core.warning('Simulated PR synchronize event - COMMIT_SHA is empty, cannot fetch files from commit');
+			}
+		} else {
+			// For other events, get all files changed in the PR
+			files = await this.getChangedFiles(pr.number);
+		}
 
 		// Limit number of files to analyze
 		if (files.length > maxFiles) {
@@ -540,11 +592,16 @@ async function runLocal(): Promise<void> {
 		const model = process.env.MODEL || "claude-3-5-haiku-20241022";
 		const useRepomix = process.env.USE_REPOMIX !== "false";
 		const commentStdout = process.env.COMMENT_STDOUT === "true";
+		const simulateSynchronize = process.env.SIMULATE_SYNCHRONIZE === "true";
+		const commitSha = process.env.COMMIT_SHA || "";
 
 		console.log(`Project Type: ${projectType}`);
 		console.log(`Max Files: ${maxFiles}`);
 		console.log(`Model: ${model}`);
 		console.log(`Print comments to stdout: ${commentStdout}`);
+		if (simulateSynchronize) {
+			console.log(`Simulating PR synchronize event with commit: ${commitSha}`);
+		}
 
 		// Initialize options
 		const options: ReviewOptions = {

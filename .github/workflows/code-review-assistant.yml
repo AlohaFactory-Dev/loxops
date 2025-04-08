@@ -23,7 +23,7 @@ jobs:
 
       # Claude AI 코드 리뷰 액션 실행
       - name: Run Code Review Assistant
-        uses: AlohaFactory-Dev/loxops@v1.0.2
+        uses: AlohaFactory-Dev/loxops@d68fcdf37b7d504cde814a67c3bd209142c36151
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           claude-api-key: ${{ secrets.CLAUDE_API_KEY }}

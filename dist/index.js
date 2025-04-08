@@ -42144,9 +42144,51 @@ class GitHubService {
             return [];
         }
     }
+    async getFilesFromCommit(commitSha) {
+        const { owner, repo } = this.context.repo;
+        core.info(`Fetching files changed in commit ${commitSha}...`);
+        try {
+            const response = await this.octokit.rest.repos.getCommit({
+                owner,
+                repo,
+                ref: commitSha,
+            });
+            const changedFiles = [];
+            for (const file of response.data.files || []) {
+                if (!this.fileAnalyzer.shouldAnalyzeFile(file.filename)) {
+                    continue;
+                }
+                const fileChange = {
+                    filename: file.filename,
+                    status: file.status,
+                    patch: file.patch,
+                };
+                changedFiles.push(fileChange);
+            }
+            core.info(`Found ${changedFiles.length} relevant files in commit ${commitSha}`);
+            return changedFiles;
+        }
+        catch (error) {
+            if (error instanceof Error) {
+                core.warning(`Error fetching files for commit ${commitSha}: ${error.message}`);
+            }
+            return [];
+        }
+    }
     async prepareReviewContext(maxFiles) {
         const pr = await this.getPullRequestDetails();
-        let files = await this.getChangedFiles(pr.number);
+        let files = [];
+        // Check if this is a synchronize event (new commits pushed to PR)
+        const isSynchronizeEvent = this.context.payload.action === "synchronize";
+        if (isSynchronizeEvent && this.context.payload.after) {
+            // For synchronize events, only get files from the latest commit
+            core.info("PR synchronize event detected - getting only files from latest commit");
+            files = await this.getFilesFromCommit(this.context.payload.after);
+        }
+        else {
+            // For other events, get all files changed in the PR
+            files = await this.getChangedFiles(pr.number);
+        }
         // Limit number of files to analyze
         if (files.length > maxFiles) {
             core.warning(`Limiting analysis to ${maxFiles} files out of ${files.length} changed files`);

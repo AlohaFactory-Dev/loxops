@@ -2,11 +2,7 @@ name: Loxops - AI Code Review Assistant
 
 on:
   pull_request:
-    types: [opened, synchronize]
-    # 특정 브랜치만 대상으로 하고 싶다면 아래 주석을 해제하세요
-    # branches:
-    #   - main
-    #   - develop
+    types: [opened]
 
 permissions:
   contents: read
